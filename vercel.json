@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/((?!api/|sw.js|manifest.json|vite.svg).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
