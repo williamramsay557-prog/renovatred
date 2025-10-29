@@ -60,7 +60,7 @@ adhere to this charter to ensure a consistent, helpful, and inspiring user exper
 */
 
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
 export const generateTaskDetails = async (task: Task, property: Property): Promise<Partial<Task>> => {
     const model = 'gemini-2.5-pro';
