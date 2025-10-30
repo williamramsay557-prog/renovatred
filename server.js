@@ -11,9 +11,40 @@ if (!process.env.GEMINI_API_KEY) {
     process.exit(1);
 }
 
+// Rate limiting
+const requestCounts = new Map();
+const RATE_LIMIT_WINDOW = 60 * 1000;
+const MAX_REQUESTS = 20;
+
+function rateLimitMiddleware(req, res, next) {
+    const identifier = req.ip || 'unknown';
+    const now = Date.now();
+    const record = requestCounts.get(identifier);
+
+    if (!record || now > record.resetTime) {
+        requestCounts.set(identifier, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+        return next();
+    }
+
+    if (record.count >= MAX_REQUESTS) {
+        return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+
+    record.count++;
+    next();
+}
+
 // Middleware
-app.use(cors());
-app.use(express.json());
+const corsOptions = {
+    origin: process.env.NODE_ENV === 'production' 
+        ? process.env.ALLOWED_ORIGINS?.split(',') || [] 
+        : ['http://localhost:5000', 'http://0.0.0.0:5000'],
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
+app.use(rateLimitMiddleware);
 
 // Initialize Gemini AI with API key from environment
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -23,6 +54,66 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Input validation helper with type checking
+function validatePayload(action, payload) {
+    if (!payload || typeof payload !== 'object') {
+        return 'Invalid payload format';
+    }
+
+    switch (action) {
+        case 'generateTaskDetails':
+        case 'getTaskChatResponse':
+            if (!payload.task || typeof payload.task !== 'object') {
+                return 'Invalid or missing task object';
+            }
+            if (!payload.property || typeof payload.property !== 'object') {
+                return 'Invalid or missing property object';
+            }
+            if (action === 'getTaskChatResponse') {
+                if (!Array.isArray(payload.history)) {
+                    return 'History must be an array';
+                }
+            }
+            break;
+        case 'getProjectChatResponse':
+            if (!Array.isArray(payload.history)) {
+                return 'History must be an array';
+            }
+            if (!payload.property || typeof payload.property !== 'object') {
+                return 'Invalid or missing property object';
+            }
+            if (!Array.isArray(payload.tasks)) {
+                return 'Tasks must be an array';
+            }
+            break;
+        case 'generateGuidingTaskIntroduction':
+            if (!payload.taskTitle || typeof payload.taskTitle !== 'string') {
+                return 'Invalid or missing taskTitle';
+            }
+            if (!payload.taskRoom || typeof payload.taskRoom !== 'string') {
+                return 'Invalid or missing taskRoom';
+            }
+            if (!payload.property || typeof payload.property !== 'object') {
+                return 'Invalid or missing property object';
+            }
+            break;
+        case 'generateProjectSummary':
+            if (!payload.property || typeof payload.property !== 'object') {
+                return 'Invalid or missing property object';
+            }
+            if (!Array.isArray(payload.tasks)) {
+                return 'Tasks must be an array';
+            }
+            break;
+        case 'generateVisionStatement':
+            if (!Array.isArray(payload.history)) {
+                return 'History must be an array';
+            }
+            break;
+    }
+    return null;
+}
+
 // Main Gemini API endpoint
 app.post('/api/gemini', async (req, res) => {
     try {
@@ -30,6 +121,11 @@ app.post('/api/gemini', async (req, res) => {
         
         if (!action || !payload) {
             return res.status(400).json({ error: 'Missing action or payload' });
+        }
+
+        const validationError = validatePayload(action, payload);
+        if (validationError) {
+            return res.status(400).json({ error: validationError });
         }
 
         let result;

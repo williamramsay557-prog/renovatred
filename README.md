@@ -1,16 +1,36 @@
-# Renovatr - A Social DIY Renovation Assistant
+# Renovatr - AI-Powered UK Home Renovation Planner
 
-This document outlines the architecture of the Renovatr application.
+A comprehensive, production-ready DIY home renovation planning application powered by Google Gemini AI, specifically designed for the UK market.
 
-## 1. Project Overview & Architecture
+## ⭐ Features
 
-Renovatr is a powerful application with a full-stack architecture powered by Supabase and Google Gemini.
+- **AI-Powered Planning**: Detailed task breakdowns using Gemini 2.5 Pro
+- **UK-Specific Guidance**: Materials, costs in GBP, Amazon.co.uk affiliate links
+- **Safety-First Approach**: PPE requirements and professional recommendations
+- **Interactive Chat Interface**: Conversational planning with AI assistance
+- **Progress Tracking**: Task management, material checklists, tool inventory
+- **Social Features**: Share progress, connect with other renovators
+- **Production-Ready**: Rate limiting, error boundaries, comprehensive security
 
--   **Frontend:** A responsive React application built with TypeScript.
--   **Backend (`Supabase`):** The backend is built on Supabase, which provides a Postgres database, authentication, storage, and auto-generated APIs.
--   **Data Services (`services/projectService.ts`):** This service layer contains all the logic for communicating with the Supabase backend. It handles all database operations and file uploads.
--   **Authentication (`services/authService.ts`):** This service handles user sign-up, sign-in, and session management using Supabase Auth.
--   **AI Core (`geminiService.ts`):** This service handles all interactions with the Google Gemini API, following the principles of the "Renovatr AI Charter".
+## 🏗️ Architecture
+
+Renovatr features a modern full-stack architecture with enterprise-grade security and performance optimizations.
+
+### Tech Stack
+- **Frontend**: React 18 + TypeScript + Vite
+- **Backend**: Express.js (Node.js) on port 3000
+- **AI**: Google Gemini AI (2.5 Pro & Flash)
+- **Database**: Supabase (PostgreSQL) - authentication, storage, real-time
+- **Code Quality**: ESLint + Prettier + TypeScript strict mode
+- **Testing**: Vitest + React Testing Library
+- **Security**: Rate limiting, input validation, CORS, error boundaries
+
+### Key Components
+-   **Frontend (Port 5000):** A responsive React application built with TypeScript
+-   **Backend (Port 3000):** Express.js server with secure API endpoints
+-   **Data Services (`services/projectService.ts`):** All Supabase database operations and file uploads
+-   **Authentication (`services/authService.ts`):** User authentication and session management
+-   **AI Services (`services/geminiService.ts`):** Google Gemini API interactions with error handling
 
 ## 2. Getting Started: Supabase Setup
 

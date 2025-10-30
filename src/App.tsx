@@ -11,11 +11,12 @@ import { Header, KanbanColumn, TaskDetailModal, Overview } from './components/Ap
 import { RoomProgress } from './components/RoomProgress';
 import { ChatWindow } from './components/ChatWindow';
 import { Icon } from './components/Icons';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 type AppView = 'setup' | 'main';
 type MainView = 'feed' | 'profile' | 'project';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
     // Top-level application state
     const [appView, setAppView] = useState<AppView>('main');
     const [mainView, setMainView] = useState<MainView>('project');
@@ -500,6 +501,14 @@ const App: React.FC = () => {
             )}
         </div>
     );
+};
+
+const App: React.FC = () => {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
 };
 
 export default App;
