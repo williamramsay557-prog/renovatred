@@ -5,6 +5,12 @@ import { GoogleGenAI, Type } from '@google/genai';
 const app = express();
 const PORT = 3000;
 
+// Validate required environment variables at startup
+if (!process.env.GEMINI_API_KEY) {
+    console.error('ERROR: GEMINI_API_KEY is not set. Please add it to your Replit Secrets.');
+    process.exit(1);
+}
+
 // Middleware
 app.use(cors());
 app.use(express.json());
