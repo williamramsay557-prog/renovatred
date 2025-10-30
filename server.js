@@ -1,0 +1,182 @@
+import express from 'express';
+import cors from 'cors';
+import { GoogleGenAI, Type } from '@google/genai';
+
+const app = express();
+const PORT = 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Initialize Gemini AI with API key from environment
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Main Gemini API endpoint
+app.post('/api/gemini', async (req, res) => {
+    try {
+        const { action, payload } = req.body;
+        
+        if (!action || !payload) {
+            return res.status(400).json({ error: 'Missing action or payload' });
+        }
+
+        let result;
+
+        switch (action) {
+            case 'generateTaskDetails':
+                result = await generateTaskDetails(payload.task, payload.property);
+                break;
+            case 'getTaskChatResponse':
+                result = await getTaskChatResponse(payload.task, payload.history, payload.property);
+                break;
+            case 'getProjectChatResponse':
+                result = await getProjectChatResponse(payload.history, payload.property, payload.tasks);
+                break;
+            case 'generateGuidingTaskIntroduction':
+                result = await generateGuidingTaskIntroduction(payload.taskTitle, payload.taskRoom, payload.property);
+                break;
+            case 'generateProjectSummary':
+                result = await generateProjectSummary(payload.property, payload.tasks);
+                break;
+            case 'generateVisionStatement':
+                result = await generateVisionStatement(payload.history);
+                break;
+            default:
+                return res.status(400).json({ error: `Invalid action: ${action}` });
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error in /api/gemini:', error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+        res.status(500).json({ error: `An internal server error occurred: ${errorMessage}` });
+    }
+});
+
+// --- AI Service Functions ---
+
+const generateTaskDetails = async (task, property) => {
+    const model = 'gemini-2.5-pro';
+    const schema = {
+        type: Type.OBJECT,
+        properties: {
+            guide: { type: Type.ARRAY, description: "A detailed, step-by-step checklist for completing the task.", items: { type: Type.OBJECT, properties: { text: { type: Type.STRING }, completed: { type: Type.BOOLEAN, default: false } }, required: ['text', 'completed'] } },
+            materials: { type: Type.ARRAY, description: "A list of materials needed, with estimated costs and shopping links.", items: { type: Type.OBJECT, properties: { text: { type: Type.STRING }, cost: { type: Type.NUMBER, description: "Estimated cost in GBP (£)" }, link: { type: Type.STRING, description: "A UK-specific shopping link, preferably from Amazon.co.uk." }, completed: { type: Type.BOOLEAN, default: false } }, required: ['text', 'completed'] } },
+            tools: { type: Type.ARRAY, description: "A list of tools required, with links for purchasing if needed.", items: { type: Type.OBJECT, properties: { text: { type: Type.STRING }, cost: { type: Type.NUMBER, description: "Estimated cost in GBP (£) if the user needs to buy it." }, link: { type: Type.STRING, description: "A UK-specific shopping link, preferably from Amazon.co.uk." }, owned: { type: Type.BOOLEAN, default: false } }, required: ['text', 'owned'] } },
+            safety: { type: Type.ARRAY, description: "Crucial safety warnings and required personal protective equipment (PPE).", items: { type: Type.STRING } },
+            cost: { type: Type.STRING, description: "A brief, one-sentence summary of the total estimated cost." },
+            time: { type: Type.STRING, description: "A realistic time estimate for a single person to complete the task (e.g., '4-6 hours', '2 days')." },
+            hiringInfo: { type: Type.STRING, description: "Advice on when to hire a professional for this task, including what qualifications to look for (e.g., 'NICEIC certified electrician'). This should be a well-reasoned paragraph." }
+        },
+    };
+
+    const systemInstruction = `You are an expert DIY and home renovation assistant for a UK-based user. Your role is to take a user's request from a chat conversation about a specific task and generate a complete, structured plan for them.
+
+    **CONTEXT:**
+    - Project: ${property.name}
+    - Room: ${task.room}
+    - The user wants a plan for the task: "${task.title}"
+    - The user's vision for the project is: "${property.visionStatement || 'Not specified'}"
+
+    **YOUR TASK:**
+    Analyze the provided chat history for the task. Based on the user's questions, goals, and skill level mentioned, generate a comprehensive and actionable plan.
+
+    **RULES:**
+    1.  **Be Thorough:** Provide detailed steps in the 'guide'. Don't assume prior knowledge.
+    2.  **Be UK-Specific:** Recommend materials and tools from UK suppliers. Costs must be in GBP (£). Links should point to amazon.co.uk where possible.
+    3.  **Safety First:** The 'safety' section is non-negotiable. Always include relevant warnings and PPE.
+    4.  **Realistic Estimates:** Provide practical cost and time estimates.
+    5.  **Honest Advice:** Use the 'hiringInfo' section to advise the user when a task is too complex, dangerous, or requires certified professionals (e.g., gas, complex electrics).
+    6.  **Affiliate Links:** For every shopping link you generate, create a search link on amazon.co.uk. For example, for "wood primer", the link should be "https://www.amazon.co.uk/s?k=wood+primer".
+    7.  **JSON Output:** You MUST return ONLY a valid JSON object that conforms to the provided schema. Do not include any explanatory text or markdown formatting.`;
+
+    const contents = task.chatHistory.map(msg => ({ role: msg.role, parts: msg.parts }));
+
+    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction, responseMimeType: "application/json", responseSchema: schema } });
+    let jsonText = response.text.trim();
+    const parsedJson = JSON.parse(jsonText);
+
+    const addAffiliateTag = (link) => link ? `${link}&tag=RENOVATR-21` : undefined;
+    if (parsedJson.materials) {
+        parsedJson.materials.forEach((item) => {
+            item.link = addAffiliateTag(item.link);
+        });
+    }
+    if (parsedJson.tools) {
+        parsedJson.tools.forEach((item) => {
+            item.link = addAffiliateTag(item.link);
+        });
+    }
+        
+    return parsedJson;
+};
+
+const getTaskChatResponse = async (task, history, property) => {
+    const model = 'gemini-2.5-flash';
+    const contents = history.map(msg => ({ role: msg.role, parts: msg.parts }));
+    const systemInstruction = `You are a friendly and encouraging DIY expert providing advice for a UK user.
+    - Project: ${property.name}
+    - Room: ${task.room}
+    - Task: "${task.title}"
+    Your goal is to answer the user's questions about this specific task. If you have enough information to create a full plan, respond with the user's answer and then include the special command "[GENERATE_PLAN]". If the user provides a significant update or change, you can use the command "[UPDATE_PLAN]" followed by a JSON object of the fields to update, e.g., "[UPDATE_PLAN] { "cost": "£150-£200" }". Otherwise, just provide a helpful, conversational response.`;
+    
+    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction } });
+    return { role: 'model', parts: [{ text: response.text }] };
+};
+
+const getProjectChatResponse = async (history, property, tasks) => {
+    const model = 'gemini-2.5-flash';
+    const contents = history.map(msg => ({ role: msg.role, parts: msg.parts }));
+    const existingTasks = tasks.map(t => `- ${t.title} (${t.room})`).join('\n');
+
+    const systemInstruction = `You are a helpful and inspiring project assistant for a UK-based DIY renovator. Your goal is to help them define their vision for their project: "${property.name}".
+    - Existing Rooms: ${property.rooms.map(r => r.name).join(', ')}
+    - Existing Tasks: \n${existingTasks}
+    Engage in a friendly conversation. Ask clarifying questions. If the user mentions a specific, actionable task, you MUST embed a special command in your response: [SUGGEST_TASK:{"title": "Task Title", "room": "Room Name"}]. For example, if they say "I need to paint the living room", you would include [SUGGEST_TASK:{"title": "Paint the living room", "room": "Living Room"}]. You can suggest multiple tasks. Otherwise, just provide a helpful, conversational response.`;
+
+    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction } });
+    return { role: 'model', parts: [{ text: response.text }] };
+};
+
+const generateGuidingTaskIntroduction = async (taskTitle, taskRoom, property) => {
+    const model = 'gemini-2.5-flash';
+    const context = `The user is starting a new task: "${taskTitle}" in the room: "${taskRoom}" for their project: "${property.name}". Their overall vision is: "${property.visionStatement || 'Not defined yet'}". 
+    Your job is to write a friendly, engaging first message for the task-specific chat window. Ask one or two clarifying questions to help them get started. For example, ask about the current state of the room, their desired outcome, or their skill level. Keep it brief and encouraging.`;
+
+    const response = await ai.models.generateContent({ model, contents: context });
+    return { role: 'model', parts: [{ text: response.text }] };
+};
+
+const generateProjectSummary = async (property, tasks) => {
+    const model = 'gemini-2.5-flash';
+    const taskSummary = tasks.map(t => `- ${t.title} (${t.status})`).join('\n');
+    const prompt = `Based on the following project information, generate a one-paragraph (2-3 sentences) summary.
+    - Project: ${property.name}
+    - Vision: ${property.visionStatement || 'Not defined yet'}
+    - Rooms: ${property.rooms.map(r => r.name).join(', ')}
+    - Tasks:\n${taskSummary}
+    The summary should be encouraging and reflect the current state of the project.`;
+
+    const response = await ai.models.generateContent({ model, contents: prompt });
+    return response.text;
+};
+
+const generateVisionStatement = async (history) => {
+    const model = 'gemini-2.5-flash';
+    const prompt = `Analyze the following conversation between a user and an AI assistant about a home renovation project. Based on the user's messages, distill their goals and desired aesthetic into a single, inspiring "Vision Statement" sentence. The statement should be concise and capture the essence of what the user wants to achieve. Return only the vision statement text, without any additional formatting or explanation.`;
+    
+    const contents = history.map(msg => ({ role: msg.role, parts: msg.parts }));
+    const response = await ai.models.generateContent({ model, contents: prompt });
+    return response.text.trim().replace(/"/g, "");
+};
+
+// Start server
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Backend server running on http://0.0.0.0:${PORT}`);
+});
