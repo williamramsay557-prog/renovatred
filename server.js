@@ -1,9 +1,26 @@
 import express from 'express';
 import cors from 'cors';
 import { GoogleGenAI, Type } from '@google/genai';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 const PORT = 3000;
+
+// Initialize server-side Supabase client with service role key
+const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+    console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
+    process.exit(1);
+}
+
+const supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+        autoRefreshToken: false,
+        persistSession: false
+    }
+});
 
 // Validate required environment variables at startup
 if (!process.env.GEMINI_API_KEY) {
@@ -81,22 +98,591 @@ const validateImageUpload = (imageData) => {
 // Initialize Gemini AI with API key from environment
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// ============================================================================
+// AUTHENTICATION & VALIDATION MIDDLEWARE
+// ============================================================================
+
+/**
+ * JWT Auth Middleware
+ * Verifies Supabase access tokens and attaches user to request
+ */
+const verifyAuth = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Unauthorized - No valid authorization header' });
+        }
+        
+        const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+        
+        // Verify JWT using Supabase
+        const { data: { user }, error } = await supabaseServer.auth.getUser(token);
+        
+        if (error || !user) {
+            console.error('Auth verification failed:', error);
+            return res.status(401).json({ error: 'Unauthorized - Invalid or expired token' });
+        }
+        
+        // Attach user to request object
+        req.user = {
+            id: user.id,
+            email: user.email,
+            token: token
+        };
+        
+        next();
+    } catch (error) {
+        console.error('Auth middleware error:', error);
+        return res.status(500).json({ error: 'Internal authentication error' });
+    }
+};
+
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// SECURITY: Auth middleware to verify requests
-const verifyAuth = (req, res, next) => {
-    // TODO: Implement proper session/JWT verification
-    // For now, we're relying on Supabase client-side auth
-    // In production, this should verify server-side sessions
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        return res.status(401).json({ error: 'Unauthorized - No auth header' });
+// ============================================================================
+// SECURE API ENDPOINTS (Phase 2)
+// ============================================================================
+
+// --- Project CRUD Operations ---
+
+/**
+ * GET /api/projects
+ * Fetch all projects for the authenticated user
+ */
+app.get('/api/projects', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        const { data: projectsData, error } = await supabaseServer
+            .from('projects')
+            .select(`
+                id,
+                user_id,
+                name,
+                vision_statement,
+                project_chat_history,
+                rooms(*),
+                tasks(*)
+            `)
+            .eq('user_id', userId);
+        
+        if (error) throw error;
+        
+        // Transform to match frontend interface
+        const projects = projectsData.map(p => ({
+            id: p.id,
+            userId: p.user_id,
+            property: {
+                id: p.id,
+                name: p.name,
+                rooms: p.rooms.map(r => ({
+                    ...r,
+                    aiSummary: r.ai_summary
+                })),
+                visionStatement: p.vision_statement,
+                projectChatHistory: p.project_chat_history,
+            },
+            tasks: p.tasks.map(t => ({
+                ...t,
+                chatHistory: t.chat_history,
+                hiringInfo: t.hiring_info,
+                hasBeenOpened: t.has_been_opened
+            })),
+            feedPosts: []
+        }));
+        
+        res.json(projects);
+    } catch (error) {
+        console.error('Error fetching projects:', error);
+        res.status(500).json({ error: 'Failed to fetch projects' });
     }
-    next();
-};
+});
+
+/**
+ * GET /api/projects/:id
+ * Fetch a single project by ID (must belong to authenticated user)
+ */
+app.get('/api/projects/:id', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const projectId = req.params.id;
+        
+        const { data, error } = await supabaseServer
+            .from('projects')
+            .select(`
+                id,
+                user_id,
+                name,
+                vision_statement,
+                project_chat_history,
+                rooms(*),
+                tasks(*)
+            `)
+            .eq('id', projectId)
+            .eq('user_id', userId) // Security: ensure user owns project
+            .single();
+        
+        if (error) throw error;
+        if (!data) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+        
+        const project = {
+            id: data.id,
+            userId: data.user_id,
+            property: {
+                id: data.id,
+                name: data.name,
+                rooms: data.rooms.map(r => ({
+                    ...r,
+                    aiSummary: r.ai_summary
+                })),
+                visionStatement: data.vision_statement,
+                projectChatHistory: data.project_chat_history,
+            },
+            tasks: data.tasks.map(t => ({
+                ...t,
+                chatHistory: t.chat_history,
+                hiringInfo: t.hiring_info,
+                hasBeenOpened: t.has_been_opened
+            })),
+            feedPosts: []
+        };
+        
+        res.json(project);
+    } catch (error) {
+        console.error('Error fetching project:', error);
+        res.status(500).json({ error: 'Failed to fetch project' });
+    }
+});
+
+/**
+ * POST /api/projects
+ * Create a new project
+ */
+app.post('/api/projects', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { property } = req.body;
+        
+        if (!property || !property.name) {
+            return res.status(400).json({ error: 'Property name is required' });
+        }
+        
+        // Create project
+        const { data: projectData, error: projectError } = await supabaseServer
+            .from('projects')
+            .insert({
+                user_id: userId,
+                name: property.name,
+                vision_statement: property.visionStatement || '',
+                project_chat_history: property.projectChatHistory || []
+            })
+            .select()
+            .single();
+        
+        if (projectError) throw projectError;
+        
+        // Create rooms if provided
+        if (property.rooms && property.rooms.length > 0) {
+            const roomsToInsert = property.rooms.map(room => ({
+                project_id: projectData.id,
+                name: room.name,
+                photos: room.photos || []
+            }));
+            
+            const { error: roomsError } = await supabaseServer
+                .from('rooms')
+                .insert(roomsToInsert);
+            
+            if (roomsError) throw roomsError;
+        }
+        
+        res.status(201).json({ projectId: projectData.id });
+    } catch (error) {
+        console.error('Error creating project:', error);
+        res.status(500).json({ error: 'Failed to create project' });
+    }
+});
+
+/**
+ * PUT /api/projects/:id
+ * Update an existing project
+ */
+app.put('/api/projects/:id', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const projectId = req.params.id;
+        const { property } = req.body;
+        
+        // Verify ownership
+        const { data: existing, error: checkError } = await supabaseServer
+            .from('projects')
+            .select('user_id')
+            .eq('id', projectId)
+            .single();
+        
+        if (checkError || !existing || existing.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your project' });
+        }
+        
+        // Update project
+        const { error } = await supabaseServer
+            .from('projects')
+            .update({
+                name: property.name,
+                vision_statement: property.visionStatement,
+                project_chat_history: property.projectChatHistory
+            })
+            .eq('id', projectId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating project:', error);
+        res.status(500).json({ error: 'Failed to update project' });
+    }
+});
+
+/**
+ * DELETE /api/projects/:id
+ * Delete a project
+ */
+app.delete('/api/projects/:id', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const projectId = req.params.id;
+        
+        // Verify ownership
+        const { data: existing, error: checkError } = await supabaseServer
+            .from('projects')
+            .select('user_id')
+            .eq('id', projectId)
+            .single();
+        
+        if (checkError || !existing || existing.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your project' });
+        }
+        
+        // Delete project (cascade should handle rooms/tasks)
+        const { error } = await supabaseServer
+            .from('projects')
+            .delete()
+            .eq('id', projectId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting project:', error);
+        res.status(500).json({ error: 'Failed to delete project' });
+    }
+});
+
+// --- Task Operations ---
+
+/**
+ * POST /api/projects/:projectId/tasks
+ * Create a new task for a project
+ */
+app.post('/api/projects/:projectId/tasks', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const projectId = req.params.projectId;
+        const { task } = req.body;
+        
+        // Verify ownership of project
+        const { data: project, error: projectError } = await supabaseServer
+            .from('projects')
+            .select('user_id, rooms(id, name)')
+            .eq('id', projectId)
+            .single();
+        
+        if (projectError || !project || project.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your project' });
+        }
+        
+        // Find room ID by name
+        const room = project.rooms.find(r => r.name === task.room);
+        
+        // Insert task
+        const { error } = await supabaseServer
+            .from('tasks')
+            .insert({
+                project_id: projectId,
+                room_id: room?.id,
+                title: task.title,
+                room: task.room,
+                status: task.status || 'pending',
+                priority: task.priority || 'medium',
+                chat_history: task.chatHistory || [],
+                guide: task.guide || [],
+                safety: task.safety || [],
+                materials: task.materials || [],
+                tools: task.tools || [],
+                cost: task.cost || 0,
+                time: task.time || '',
+                hiring_info: task.hiringInfo || null,
+                has_been_opened: task.hasBeenOpened || false
+            });
+        
+        if (error) throw error;
+        
+        res.status(201).json({ success: true });
+    } catch (error) {
+        console.error('Error creating task:', error);
+        res.status(500).json({ error: 'Failed to create task' });
+    }
+});
+
+/**
+ * PUT /api/tasks/:taskId
+ * Update a task
+ */
+app.put('/api/tasks/:taskId', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const taskId = req.params.taskId;
+        const { task } = req.body;
+        
+        // Verify ownership via project
+        const { data: taskData, error: taskError } = await supabaseServer
+            .from('tasks')
+            .select('project_id, projects(user_id)')
+            .eq('id', taskId)
+            .single();
+        
+        if (taskError || !taskData || taskData.projects.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your task' });
+        }
+        
+        // Update task
+        const { error } = await supabaseServer
+            .from('tasks')
+            .update({
+                status: task.status,
+                priority: task.priority,
+                chat_history: task.chatHistory,
+                guide: task.guide,
+                safety: task.safety,
+                materials: task.materials,
+                tools: task.tools,
+                cost: task.cost,
+                time: task.time,
+                hiring_info: task.hiringInfo,
+                has_been_opened: task.hasBeenOpened
+            })
+            .eq('id', taskId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating task:', error);
+        res.status(500).json({ error: 'Failed to update task' });
+    }
+});
+
+/**
+ * DELETE /api/tasks/:taskId
+ * Delete a task
+ */
+app.delete('/api/tasks/:taskId', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const taskId = req.params.taskId;
+        
+        // Verify ownership via project
+        const { data: taskData, error: taskError } = await supabaseServer
+            .from('tasks')
+            .select('project_id, projects(user_id)')
+            .eq('id', taskId)
+            .single();
+        
+        if (taskError || !taskData || taskData.projects.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your task' });
+        }
+        
+        // Delete task
+        const { error } = await supabaseServer
+            .from('tasks')
+            .delete()
+            .eq('id', taskId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting task:', error);
+        res.status(500).json({ error: 'Failed to delete task' });
+    }
+});
+
+// --- Room Operations ---
+
+/**
+ * POST /api/projects/:projectId/rooms
+ * Create a new room for a project
+ */
+app.post('/api/projects/:projectId/rooms', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const projectId = req.params.projectId;
+        const { roomName } = req.body;
+        
+        // Verify ownership
+        const { data: project, error: projectError } = await supabaseServer
+            .from('projects')
+            .select('user_id')
+            .eq('id', projectId)
+            .single();
+        
+        if (projectError || !project || project.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your project' });
+        }
+        
+        // Create room
+        const { error } = await supabaseServer
+            .from('rooms')
+            .insert({
+                project_id: projectId,
+                name: roomName,
+                photos: []
+            });
+        
+        if (error) throw error;
+        
+        res.status(201).json({ success: true });
+    } catch (error) {
+        console.error('Error creating room:', error);
+        res.status(500).json({ error: 'Failed to create room' });
+    }
+});
+
+/**
+ * DELETE /api/rooms/:roomId
+ * Delete a room
+ */
+app.delete('/api/rooms/:roomId', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const roomId = req.params.roomId;
+        
+        // Verify ownership via project
+        const { data: roomData, error: roomError } = await supabaseServer
+            .from('rooms')
+            .select('project_id, projects(user_id)')
+            .eq('id', roomId)
+            .single();
+        
+        if (roomError || !roomData || roomData.projects.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your room' });
+        }
+        
+        // Delete room
+        const { error } = await supabaseServer
+            .from('rooms')
+            .delete()
+            .eq('id', roomId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting room:', error);
+        res.status(500).json({ error: 'Failed to delete room' });
+    }
+});
+
+/**
+ * POST /api/rooms/:roomId/photos
+ * Add a photo to a room (expects image uploaded via /api/upload first)
+ */
+app.post('/api/rooms/:roomId/photos', verifyAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const roomId = req.params.roomId;
+        const { photoUrl } = req.body;
+        
+        // Verify ownership and get current photos
+        const { data: roomData, error: roomError } = await supabaseServer
+            .from('rooms')
+            .select('photos, project_id, projects(user_id)')
+            .eq('id', roomId)
+            .single();
+        
+        if (roomError || !roomData || roomData.projects.user_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden - not your room' });
+        }
+        
+        // Add photo to array
+        const newPhotos = [...roomData.photos, photoUrl];
+        const { error } = await supabaseServer
+            .from('rooms')
+            .update({ photos: newPhotos })
+            .eq('id', roomId);
+        
+        if (error) throw error;
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error adding photo to room:', error);
+        res.status(500).json({ error: 'Failed to add photo' });
+    }
+});
+
+// --- Image Upload ---
+
+/**
+ * POST /api/upload
+ * Upload an image to Supabase Storage (server-side)
+ */
+app.post('/api/upload', verifyAuth, async (req, res) => {
+    try {
+        const { dataUrl, fileNamePrefix } = req.body;
+        
+        if (!dataUrl || !fileNamePrefix) {
+            return res.status(400).json({ error: 'dataUrl and fileNamePrefix are required' });
+        }
+        
+        // Validate image
+        const { mimeType, base64Data } = validateImageUpload(dataUrl);
+        
+        // Convert base64 to buffer
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        // Determine file extension
+        const ext = mimeType.split('/')[1];
+        const fileName = `${fileNamePrefix}-${Date.now()}.${ext}`;
+        const filePath = `public/${fileName}`;
+        
+        // Upload to Supabase Storage
+        const { error: uploadError } = await supabaseServer.storage
+            .from('images')
+            .upload(filePath, buffer, {
+                contentType: mimeType,
+                cacheControl: '3600',
+                upsert: false
+            });
+        
+        if (uploadError) throw uploadError;
+        
+        // Get public URL
+        const { data } = supabaseServer.storage
+            .from('images')
+            .getPublicUrl(filePath);
+        
+        res.json({ publicUrl: data.publicUrl });
+    } catch (error) {
+        console.error('Error uploading image:', error);
+        res.status(500).json({ error: error.message || 'Failed to upload image' });
+    }
+});
 
 // SECURITY: Enhanced input validation middleware
 const validateGeminiRequest = (req, res, next) => {
