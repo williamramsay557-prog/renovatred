@@ -21,7 +21,7 @@ import {
 // FEATURE FLAG: Server-Side API Migration
 // Set to true to use secure server-side API, false for legacy client-side
 // ============================================================================
-const USE_SERVER_API = false; // TODO: Enable after RLS policies are deployed
+const USE_SERVER_API = true; // ✅ Enabled - RLS policies deployed Oct 31, 2025
 
 // Helper to convert base64 to a File object for uploading
 const dataURLtoFile = (dataurl: string, filename: string): File | null => {
