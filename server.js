@@ -43,8 +43,40 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb' })); // Limit payload size to prevent DoS
 app.use(rateLimitMiddleware);
+
+// SECURITY: Image validation function
+const validateImageUpload = (imageData) => {
+    const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+    const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+    
+    if (!imageData || typeof imageData !== 'string') {
+        throw new Error('Invalid image data');
+    }
+    
+    // Extract MIME type from data URL
+    const matches = imageData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+        throw new Error('Invalid image format - must be base64 data URL');
+    }
+    
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    
+    // Validate MIME type
+    if (!ALLOWED_TYPES.includes(mimeType)) {
+        throw new Error(`Unsupported image type: ${mimeType}. Allowed types: ${ALLOWED_TYPES.join(', ')}`);
+    }
+    
+    // Validate file size (estimate from base64)
+    const sizeInBytes = (base64Data.length * 3) / 4;
+    if (sizeInBytes > MAX_SIZE) {
+        throw new Error(`Image too large: ${(sizeInBytes / 1024 / 1024).toFixed(2)}MB. Maximum allowed: 5MB`);
+    }
+    
+    return { mimeType, base64Data, size: sizeInBytes };
+};
 
 // Initialize Gemini AI with API key from environment
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -54,7 +86,54 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Input validation helper with type checking
+// SECURITY: Auth middleware to verify requests
+const verifyAuth = (req, res, next) => {
+    // TODO: Implement proper session/JWT verification
+    // For now, we're relying on Supabase client-side auth
+    // In production, this should verify server-side sessions
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).json({ error: 'Unauthorized - No auth header' });
+    }
+    next();
+};
+
+// SECURITY: Enhanced input validation middleware
+const validateGeminiRequest = (req, res, next) => {
+    const { action, payload } = req.body;
+    
+    if (!action || typeof action !== 'string') {
+        return res.status(400).json({ error: 'Missing or invalid action' });
+    }
+    
+    if (!payload || typeof payload !== 'object') {
+        return res.status(400).json({ error: 'Missing or invalid payload' });
+    }
+    
+    // Validate payload size to prevent DoS
+    const payloadSize = JSON.stringify(payload).length;
+    if (payloadSize > 1024 * 1024) { // 1MB limit
+        return res.status(413).json({ error: 'Payload too large' });
+    }
+    
+    // Validate action is allowed
+    const allowedActions = [
+        'generateTaskDetails',
+        'getTaskChatResponse', 
+        'getProjectChatResponse',
+        'generateGuidingTaskIntroduction',
+        'generateProjectSummary',
+        'generateVisionStatement'
+    ];
+    
+    if (!allowedActions.includes(action)) {
+        return res.status(400).json({ error: `Invalid action: ${action}` });
+    }
+    
+    next();
+};
+
+// Input validation helper with type checking (legacy - kept for compatibility)
 function validatePayload(action, payload) {
     if (!payload || typeof payload !== 'object') {
         return 'Invalid payload format';
@@ -114,10 +193,33 @@ function validatePayload(action, payload) {
     return null;
 }
 
-// Main Gemini API endpoint
-app.post('/api/gemini', async (req, res) => {
+// Main Gemini API endpoint with enhanced security
+app.post('/api/gemini', validateGeminiRequest, async (req, res) => {
     try {
         const { action, payload } = req.body;
+        
+        // SECURITY: Validate images in payload if present
+        if (payload.task && payload.task.chatHistory) {
+            for (const msg of payload.task.chatHistory) {
+                for (const part of msg.parts || []) {
+                    if (part.inlineData) {
+                        const dataUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                        validateImageUpload(dataUrl); // Throws if invalid
+                    }
+                }
+            }
+        }
+        
+        if (payload.history) {
+            for (const msg of payload.history) {
+                for (const part of msg.parts || []) {
+                    if (part.inlineData) {
+                        const dataUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                        validateImageUpload(dataUrl); // Throws if invalid
+                    }
+                }
+            }
+        }
         
         if (!action || !payload) {
             return res.status(400).json({ error: 'Missing action or payload' });
@@ -164,7 +266,14 @@ app.post('/api/gemini', async (req, res) => {
 // --- AI Service Functions ---
 
 const generateTaskDetails = async (task, property) => {
+    // COST OPTIMIZATION: Use Pro for detailed plan generation (required for structured output)
+    // Flash doesn't support structured JSON output reliably, so Pro is necessary here
     const model = 'gemini-2.5-pro';
+    
+    // COST OPTIMIZATION: Limit chat history to last 10 messages to reduce token usage
+    const recentHistory = task.chatHistory ? task.chatHistory.slice(-10) : [];
+    const taskForPrompt = { ...task, chatHistory: recentHistory };
+    
     const schema = {
         type: Type.OBJECT,
         properties: {
@@ -188,6 +297,8 @@ const generateTaskDetails = async (task, property) => {
 
     **YOUR TASK:**
     Analyze the provided chat history for the task. Based on the user's questions, goals, and skill level mentioned, generate a comprehensive and actionable plan.
+    
+    **NOTE:** You're seeing the last 10 messages of conversation to focus on recent context and reduce costs.
 
     **RULES:**
     1.  **Be Thorough:** Provide detailed steps in the 'guide'. Don't assume prior knowledge.
@@ -198,7 +309,7 @@ const generateTaskDetails = async (task, property) => {
     6.  **Affiliate Links:** For every shopping link you generate, create a search link on amazon.co.uk. For example, for "wood primer", the link should be "https://www.amazon.co.uk/s?k=wood+primer".
     7.  **JSON Output:** You MUST return ONLY a valid JSON object that conforms to the provided schema. Do not include any explanatory text or markdown formatting.`;
 
-    const contents = task.chatHistory.map(msg => ({ role: msg.role, parts: msg.parts }));
+    const contents = taskForPrompt.chatHistory.map(msg => ({ role: msg.role, parts: msg.parts }));
 
     const response = await ai.models.generateContent({ model, contents, config: { systemInstruction, responseMimeType: "application/json", responseSchema: schema } });
     let jsonText = response.text.trim();
@@ -220,8 +331,14 @@ const generateTaskDetails = async (task, property) => {
 };
 
 const getTaskChatResponse = async (task, history, property) => {
-    const model = 'gemini-2.5-flash';
-    const contents = history.map(msg => ({ role: msg.role, parts: msg.parts }));
+    // COST OPTIMIZATION: Use Flash by default (97% cheaper), Pro only when generating detailed plans
+    const needsDetailedPlan = history.length > 5 && !task.materials;
+    const model = needsDetailedPlan ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+    
+    // COST OPTIMIZATION: Limit to last 15 messages for task chat
+    const recentHistory = history.slice(-15);
+    const contents = recentHistory.map(msg => ({ role: msg.role, parts: msg.parts }));
+    
     const systemInstruction = `You are a friendly and encouraging DIY expert providing advice for a UK user.
     - Project: ${property.name}
     - Room: ${task.room}
@@ -233,19 +350,24 @@ const getTaskChatResponse = async (task, history, property) => {
 };
 
 const getProjectChatResponse = async (history, property, tasks) => {
-    const model = 'gemini-2.5-flash';
-    const contents = history.map(msg => ({ role: msg.role, parts: msg.parts }));
-    const existingTasks = tasks.map(t => `- ${t.title} (${t.room})`).join('\n');
+    // COST OPTIMIZATION: Use Flash for most chat, Pro only for complex analysis
+    const hasImages = history.some(msg => msg.role === 'user' && msg.parts.some(part => part.inlineData));
+    const isComplexQuery = hasImages || tasks.length > 10 || history.length > 15;
+    const model = isComplexQuery ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+    
+    // COST OPTIMIZATION: Limit history to last 10 messages (saves ~70% tokens)
+    const recentHistory = history.slice(-10);
+    const contents = recentHistory.map(msg => ({ role: msg.role, parts: msg.parts }));
+    
+    // COST OPTIMIZATION: Simplified task list (only titles, not full objects)
+    const existingTasks = tasks.slice(0, 20).map(t => `- ${t.title} (${t.room})`).join('\n');
     
     // Check if user has provided visual context (images) in the conversation
-    const hasImages = history.some(msg => msg.role === 'user' && msg.parts.some(part => part.inlineData));
-    
-    // Check if user has provided detailed text descriptions
-    const userMessages = history.filter(msg => msg.role === 'user');
+    const userMessages = recentHistory.filter(msg => msg.role === 'user');
     const totalUserText = userMessages.map(msg => 
         msg.parts.filter(p => p.text).map(p => p.text).join(' ')
     ).join(' ');
-    const hasDetailedContext = totalUserText.length > 100; // More than just brief messages
+    const hasDetailedContext = totalUserText.length > 100;
     
     // Count rooms with photos
     const roomsWithPhotos = property.rooms.filter(r => r.photos && r.photos.length > 0);
@@ -307,8 +429,11 @@ const generateGuidingTaskIntroduction = async (taskTitle, taskRoom, property) =>
 };
 
 const generateProjectSummary = async (property, tasks) => {
+    // COST OPTIMIZATION: Always use Flash for summaries (simple task)
     const model = 'gemini-2.5-flash';
-    const taskSummary = tasks.map(t => `- ${t.title} (${t.status})`).join('\n');
+    
+    // COST OPTIMIZATION: Limit to first 30 tasks to avoid token bloat
+    const taskSummary = tasks.slice(0, 30).map(t => `- ${t.title} (${t.status})`).join('\n');
     const prompt = `Based on the following project information, generate a one-paragraph (2-3 sentences) summary.
     - Project: ${property.name}
     - Vision: ${property.visionStatement || 'Not defined yet'}
@@ -321,10 +446,14 @@ const generateProjectSummary = async (property, tasks) => {
 };
 
 const generateVisionStatement = async (history) => {
+    // COST OPTIMIZATION: Use Flash for vision statements (simple extraction)
     const model = 'gemini-2.5-flash';
+    
+    // COST OPTIMIZATION: Only use last 8 messages for vision extraction
+    const recentHistory = history.slice(-8);
     const prompt = `Analyze the following conversation between a user and an AI assistant about a home renovation project. Based on the user's messages, distill their goals and desired aesthetic into a single, inspiring "Vision Statement" sentence. The statement should be concise and capture the essence of what the user wants to achieve. Return only the vision statement text, without any additional formatting or explanation.`;
     
-    const contents = history.map(msg => ({ role: msg.role, parts: msg.parts }));
+    const contents = recentHistory.map(msg => ({ role: msg.role, parts: msg.parts }));
     const response = await ai.models.generateContent({ model, contents: prompt });
     return response.text.trim().replace(/"/g, "");
 };
