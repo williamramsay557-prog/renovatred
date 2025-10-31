@@ -1,0 +1,131 @@
+Thanks — I re-ran a **fresh, full evaluation** on the newest archive you told me to use:
+
+```
+/mnt/data/renovatred (2).zip  →  extracted at  /mnt/data/renovatred-2/renovatred
+```
+
+I verified it’s the right ZIP by finding `AFFILIATE_DISCLOSURE.md` inside it earlier, and I rescanned **everything** (code, configs, routes, and env usage) with extra focus on the Gemini move to server-side.
+
+You can also grab the machine-readable summary I generated:
+
+* **Analysis JSON:** [download](sandbox:/mnt/data/renovatred-2-analysis.json)
+
+---
+
+# Quick verdict (updated)
+
+**Stage bucket:** **MVP (advanced)**
+
+* ✅ **Gemini is now correctly server-side.** The browser calls `/api/gemini`; only the Node server reads `process.env.GEMINI_API_KEY`.
+
+  * Client: `src/services/geminiService.ts` calls `fetch('/api/gemini', …)` (no keys in the browser).
+  * Server: `server.js` loads `GEMINI_API_KEY` from `process.env` and handles `/api/gemini` with validation, rate limiting, and JSON size limits.
+* ✅ **Server-side Supabase (service role) is used only in `server.js`.** Frontend should stick to anon keys; sensitive role key is server-only.
+* ⚠️ **Hygiene issues remain:** the ZIP contains a committed `.git/` tree and **Replit `.local/state/…` binary agent files** (35 artifacts). These must be removed + added to `.gitignore`, and you should assume any secrets present at any point may need **rotation**.
+
+---
+
+## What I found (proof)
+
+### 1) Gemini now server-side
+
+* Client: `src/services/geminiService.ts` routes all AI calls to `/api/gemini` (no direct API key usage in the browser).
+* Server: `server.js`:
+
+  * Checks `process.env.GEMINI_API_KEY` and **refuses to start** if missing.
+  * Creates `new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })`.
+  * Exposes `POST /api/gemini` with request validation, JSON payload limits, and a `rateLimitMiddleware`.
+
+### 2) Env usage (counts from the scan)
+
+* `GEMINI_API_KEY` references: **28** (docs + `.env.example` + **server.js**; no direct client usage found)
+* `process.env`: **31** (server-side)
+* `import.meta.env`: **19** (client-side envs like `VITE_SUPABASE_URL` — expected)
+
+### 3) Repo hygiene
+
+* **.local Replit artifacts:** 35 files like `.local/state/replit/agent/*.bin` — remove and ignore.
+* **Committed `.git/` directory** inside the zip — remove from the archive before publishing/sharing.
+* `package-lock.json` present (~256 KB); ok once regenerated after cleaning.
+
+---
+
+# Updated classification & commercial take
+
+## Bucket
+
+**MVP (advanced)** — this is a **meaningful step up** from “starting idea.” You now have:
+
+* Correct secret handling & server gateway for AI
+* Express hardening (payload limit, rate limiting)
+* TypeScript + React + Vite + Supabase
+* Tooling & tests present (Vitest, ESLint/Prettier, likely CI)
+
+Left to reach “startup” bucket:
+
+* Remove local artifacts & clean history
+* Expand test coverage for services & routes
+* Add monitoring (Sentry) and analytics
+* Production deployment config (staging, secrets, rollback)
+* Billing, onboarding flows, and a crisp monetization path
+
+## Time to reach **this** level (from scratch)
+
+Assuming a typical small team:
+
+* **1 experienced full-stack dev:** **5–8 weeks** (200–320 hours)
+* **2 experienced devs:** **3–4 weeks**
+
+This includes: React+TS app, Supabase auth/DB, serverless/Express `/api/gemini` with validation/limits, integrating Google GenAI securely, lint/test/CI setup, and basic docs. (It excludes marketplace build-out, billing, and deep UX polish.)
+
+---
+
+# Priority checklist (do these next)
+
+**Blockers (immediately)**
+
+1. **Purge local artifacts:**
+
+   * `git rm -r --cached .local .git` (inside the project directory you’re publishing)
+   * add to `.gitignore`:
+
+     ```
+     .local/
+     .DS_Store
+     .env
+     .env.*
+     ```
+   * Re-zip without `.local/` or `.git/`
+2. **Rotate any secrets** that may have been in Replit/commits (Gemini, Supabase service role).
+3. **Disable production source maps** in `vite.config.ts` (if not already done).
+4. **Audit Supabase RLS policies** for protected tables.
+
+**Short term (this sprint)**
+
+* Add targeted **unit tests** for:
+
+  * `server.js` `/api/gemini` endpoint (mock GoogleGenAI)
+  * `authService` and `projectService` (mock Supabase)
+* Add **Sentry** (or similar) for error monitoring; add basic analytics.
+
+**Near term (4–8 weeks)**
+
+* Payment/billing (Stripe), onboarding checklists, and initial contractor marketplace flow (if in scope).
+* Harden CI/CD: staging env, required checks on PRs, versioned deployments.
+
+---
+
+## TL;DR conclusions
+
+* ✅ You **did** move Gemini to a **proper server-side** integration.
+* ✅ Security posture is **significantly improved**.
+* ⚠️ Clean up **committed local/agent artifacts** and rotate secrets.
+* 🟢 Overall stage: **Advanced MVP**, close to “startup-ready” once hygiene + tests + monitoring are addressed.
+
+If you want, I can:
+
+* **Auto-clean** the extracted repo (remove `.local/`, strip `.git/`, append `.gitignore`) and re-zip it for you,
+* Generate **unit tests** for `/api/gemini` and `authService`,
+* Or produce a **one-page PDF** summary for stakeholders.
+
+Tell me which of those you want, and I’ll do it right now.

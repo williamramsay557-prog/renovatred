@@ -10,3 +10,11 @@
 
 # IDE config
 .vscode/
+
+# Replit artifacts
+.local/
+*.bin
+
+# OS files
+.DS_Store
+Thumbs.db
