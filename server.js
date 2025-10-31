@@ -145,8 +145,9 @@ const verifyAuth = async (req, res, next) => {
 
 const roomSchema = z.object({
     name: z.string().min(1).max(100),
-    photos: z.array(z.string().url()).optional().default([]),
-    id: z.string().uuid().optional()
+    photos: z.array(z.string()).optional().default([]),
+    id: z.string().uuid().optional(),
+    aiSummary: z.string().optional()
 });
 
 const propertySchema = z.object({
@@ -159,18 +160,22 @@ const propertySchema = z.object({
 
 const taskSchema = z.object({
     id: z.string().uuid().optional(),
-    projectId: z.string().uuid(),
+    projectId: z.string().uuid().optional(),
     title: z.string().min(1).max(300),
     room: z.string().min(1).max(100),
+    status: z.string().optional(),
+    priority: z.string().optional(),
     description: z.string().optional(),
+    chatHistory: z.array(z.any()).optional(),
+    guide: z.array(z.any()).optional(),
+    safety: z.array(z.any()).optional(),
     materials: z.array(z.any()).optional(),
     tools: z.array(z.any()).optional(),
     cost: z.number().optional(),
-    safetyWarnings: z.array(z.string()).optional(),
-    chatHistory: z.array(z.any()).optional(),
-    isComplete: z.boolean().optional(),
+    time: z.string().optional(),
     hiringInfo: z.any().optional(),
-    hasBeenOpened: z.boolean().optional()
+    hasBeenOpened: z.boolean().optional(),
+    isComplete: z.boolean().optional()
 });
 
 const imageUploadSchema = z.object({
@@ -326,14 +331,10 @@ app.get('/api/projects/:id', verifyAuth, async (req, res) => {
  * POST /api/projects
  * Create a new project
  */
-app.post('/api/projects', verifyAuth, async (req, res) => {
+app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: propertySchema })), async (req, res) => {
     try {
         const userId = req.user.id;
-        const { property } = req.body;
-        
-        if (!property || !property.name) {
-            return res.status(400).json({ error: 'Property name is required' });
-        }
+        const { property } = req.validated;
         
         // Create project
         const { data: projectData, error: projectError } = await supabaseServer
@@ -375,11 +376,11 @@ app.post('/api/projects', verifyAuth, async (req, res) => {
  * PUT /api/projects/:id
  * Update an existing project
  */
-app.put('/api/projects/:id', verifyAuth, async (req, res) => {
+app.put('/api/projects/:id', verifyAuth, validateRequest(z.object({ property: propertySchema })), async (req, res) => {
     try {
         const userId = req.user.id;
         const projectId = req.params.id;
-        const { property } = req.body;
+        const { property } = req.validated;
         
         // Verify ownership
         const { data: existing, error: checkError } = await supabaseServer
@@ -452,11 +453,11 @@ app.delete('/api/projects/:id', verifyAuth, async (req, res) => {
  * POST /api/projects/:projectId/tasks
  * Create a new task for a project
  */
-app.post('/api/projects/:projectId/tasks', verifyAuth, async (req, res) => {
+app.post('/api/projects/:projectId/tasks', verifyAuth, validateRequest(z.object({ task: taskSchema })), async (req, res) => {
     try {
         const userId = req.user.id;
         const projectId = req.params.projectId;
-        const { task } = req.body;
+        const { task } = req.validated;
         
         // Verify ownership of project
         const { data: project, error: projectError } = await supabaseServer
@@ -506,11 +507,11 @@ app.post('/api/projects/:projectId/tasks', verifyAuth, async (req, res) => {
  * PUT /api/tasks/:taskId
  * Update a task
  */
-app.put('/api/tasks/:taskId', verifyAuth, async (req, res) => {
+app.put('/api/tasks/:taskId', verifyAuth, validateRequest(z.object({ task: taskSchema })), async (req, res) => {
     try {
         const userId = req.user.id;
         const taskId = req.params.taskId;
-        const { task } = req.body;
+        const { task } = req.validated;
         
         // Verify ownership via project
         const { data: taskData, error: taskError } = await supabaseServer
@@ -591,11 +592,11 @@ app.delete('/api/tasks/:taskId', verifyAuth, async (req, res) => {
  * POST /api/projects/:projectId/rooms
  * Create a new room for a project
  */
-app.post('/api/projects/:projectId/rooms', verifyAuth, async (req, res) => {
+app.post('/api/projects/:projectId/rooms', verifyAuth, validateRequest(z.object({ roomName: z.string().min(1).max(100) })), async (req, res) => {
     try {
         const userId = req.user.id;
         const projectId = req.params.projectId;
-        const { roomName } = req.body;
+        const { roomName } = req.validated;
         
         // Verify ownership
         const { data: project, error: projectError } = await supabaseServer
@@ -665,11 +666,11 @@ app.delete('/api/rooms/:roomId', verifyAuth, async (req, res) => {
  * POST /api/rooms/:roomId/photos
  * Add a photo to a room (expects image uploaded via /api/upload first)
  */
-app.post('/api/rooms/:roomId/photos', verifyAuth, async (req, res) => {
+app.post('/api/rooms/:roomId/photos', verifyAuth, validateRequest(z.object({ photoUrl: z.string().url() })), async (req, res) => {
     try {
         const userId = req.user.id;
         const roomId = req.params.roomId;
-        const { photoUrl } = req.body;
+        const { photoUrl } = req.validated;
         
         // Verify ownership and get current photos
         const { data: roomData, error: roomError } = await supabaseServer
@@ -704,13 +705,9 @@ app.post('/api/rooms/:roomId/photos', verifyAuth, async (req, res) => {
  * POST /api/upload
  * Upload an image to Supabase Storage (server-side)
  */
-app.post('/api/upload', verifyAuth, async (req, res) => {
+app.post('/api/upload', verifyAuth, validateRequest(imageUploadSchema), async (req, res) => {
     try {
-        const { dataUrl, fileNamePrefix } = req.body;
-        
-        if (!dataUrl || !fileNamePrefix) {
-            return res.status(400).json({ error: 'dataUrl and fileNamePrefix are required' });
-        }
+        const { dataUrl, fileNamePrefix } = req.validated;
         
         // Validate image
         const { mimeType, base64Data } = validateImageUpload(dataUrl);

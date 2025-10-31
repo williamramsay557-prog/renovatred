@@ -205,6 +205,16 @@ export const getProjectById = async (projectId: string): Promise<Project | undef
 }
 
 export const createProject = async (userId: string, property: Property): Promise<Project> => {
+    if (USE_SERVER_API) {
+        logger.info('Creating project via server API');
+        const { projectId } = await apiCreateProject(property);
+        const project = await getProjectById(projectId);
+        if (!project) throw new Error('Failed to retrieve created project');
+        return project;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side project creation');
     const { data: projectData, error: projectError } = await supabase.from('projects').insert({
         user_id: userId,
         name: property.name,
@@ -229,6 +239,14 @@ export const createProject = async (userId: string, property: Property): Promise
 };
 
 export const deleteProject = async (projectId: string): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Deleting project via server API', { projectId });
+        await apiDeleteProject(projectId);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side project deletion');
     const { error } = await supabase.from('projects').delete().eq('id', projectId);
     if (error) throw error;
 };
@@ -322,6 +340,14 @@ export const addCommentToPost = async (postId: string, userId: string, text: str
 
 // --- Generic Project Data Mutations ---
 export const updateProperty = async (projectId: string, updatedProperty: Property): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Updating property via server API', { projectId });
+        await apiUpdateProject(projectId, updatedProperty);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side property update');
     const { error } = await supabase.from('projects')
         .update({
             name: updatedProperty.name,
@@ -352,16 +378,40 @@ export const addMessageToProjectChat = async (projectId: string, message: ChatMe
 };
 
 export const addRoom = async (projectId: string, roomName: string): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Adding room via server API', { projectId, roomName });
+        await apiCreateRoom(projectId, roomName);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side room creation');
     const { error } = await supabase.from('rooms').insert({ project_id: projectId, name: roomName, photos: [] });
     if (error) throw error;
 }
 
 export const deleteRoom = async (projectId: string, roomId: string): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Deleting room via server API', { roomId });
+        await apiDeleteRoom(roomId);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side room deletion');
     const { error } = await supabase.from('rooms').delete().eq('id', roomId);
     if (error) throw error;
 }
 
 export const addPhotoToRoom = async (projectId: string, roomId: string, photoUrl: string): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Adding photo to room via server API', { roomId });
+        await apiAddPhotoToRoom(roomId, photoUrl);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side photo addition');
     const project = await getProjectById(projectId);
     const room = project?.property.rooms.find(r => r.id === roomId);
     if (!room) return;
@@ -371,10 +421,18 @@ export const addPhotoToRoom = async (projectId: string, roomId: string, photoUrl
 }
 
 export const addTask = async (projectId: string, task: Omit<Task, 'id'>): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Adding task via server API', { projectId });
+        await apiCreateTask(projectId, task as Task);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side task creation');
     const room = (await getProjectById(projectId))?.property.rooms.find(r => r.name === task.room);
     const { error } = await supabase.from('tasks').insert({
         project_id: projectId,
-        room_id: room?.id, // Can be null if room not found
+        room_id: room?.id,
         title: task.title,
         room: task.room,
         status: task.status,
@@ -393,6 +451,14 @@ export const addTask = async (projectId: string, task: Omit<Task, 'id'>): Promis
 }
 
 export const updateTask = async (projectId: string, updatedTask: Task): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Updating task via server API', { taskId: updatedTask.id });
+        await apiUpdateTask(updatedTask.id, updatedTask);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side task update');
     const { error } = await supabase.from('tasks').update({
         title: updatedTask.title,
         room: updatedTask.room,
@@ -412,6 +478,14 @@ export const updateTask = async (projectId: string, updatedTask: Task): Promise<
 };
 
 export const deleteTask = async (projectId: string, taskId: string): Promise<void> => {
+    if (USE_SERVER_API) {
+        logger.info('Deleting task via server API', { taskId });
+        await apiDeleteTask(taskId);
+        return;
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side task deletion');
     const { error } = await supabase.from('tasks').delete().eq('id', taskId);
     if (error) throw error;
 }
