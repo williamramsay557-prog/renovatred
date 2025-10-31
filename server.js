@@ -11,21 +11,26 @@ const PORT = 3000;
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!supabaseUrl || !supabaseServiceKey) {
+// For serverless (Vercel), don't exit immediately - check on first request instead
+const isServerless = process.env.VERCEL === '1' || !process.env.NODE_ENV || process.env.NODE_ENV === 'production';
+
+let supabaseServer;
+if (supabaseUrl && supabaseServiceKey) {
+    supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false
+        }
+    });
+} else if (!isServerless) {
+    // Only exit in development/non-serverless environments
     console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
     process.exit(1);
 }
 
-const supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
-    auth: {
-        autoRefreshToken: false,
-        persistSession: false
-    }
-});
-
-// Validate required environment variables at startup
-if (!process.env.GEMINI_API_KEY) {
-    console.error('ERROR: GEMINI_API_KEY is not set. Please add it to your Replit Secrets.');
+// Validate required environment variables
+if (!process.env.GEMINI_API_KEY && !isServerless) {
+    console.error('ERROR: GEMINI_API_KEY is not set. Please add it to your environment variables.');
     process.exit(1);
 }
 
@@ -121,7 +126,11 @@ const validateImageUpload = (imageData) => {
 };
 
 // Initialize Gemini AI with API key from environment
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Will throw error on first use if not set (better for serverless)
+let ai;
+if (process.env.GEMINI_API_KEY) {
+    ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+}
 
 // ============================================================================
 // AUTHENTICATION & VALIDATION MIDDLEWARE
@@ -133,6 +142,24 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
  */
 const verifyAuth = async (req, res, next) => {
     try {
+        // Check if Supabase is configured (lazy check for serverless)
+        if (!supabaseServer) {
+            // Try to initialize if we have the env vars now
+            if (supabaseUrl && supabaseServiceKey) {
+                supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
+                    auth: {
+                        autoRefreshToken: false,
+                        persistSession: false
+                    }
+                });
+            } else {
+                return res.status(500).json({ 
+                    error: 'Server configuration error',
+                    message: 'Supabase credentials are not configured. Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables in Vercel.'
+                });
+            }
+        }
+        
         const authHeader = req.headers.authorization;
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -985,6 +1012,14 @@ app.post('/api/gemini', validateGeminiRequest, async (req, res) => {
 // --- AI Service Functions ---
 
 const generateTaskDetails = async (task, property) => {
+    // Check if Gemini AI is initialized
+    if (!ai) {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error('GEMINI_API_KEY environment variable is not set. Please configure it in Vercel environment variables.');
+        }
+        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    }
+    
     // COST OPTIMIZATION: Use Pro for detailed plan generation (required for structured output)
     // Flash doesn't support structured JSON output reliably, so Pro is necessary here
     const model = 'gemini-2.5-pro';
@@ -1050,6 +1085,14 @@ const generateTaskDetails = async (task, property) => {
 };
 
 const getTaskChatResponse = async (task, history, property) => {
+    // Check if Gemini AI is initialized
+    if (!ai) {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error('GEMINI_API_KEY environment variable is not set.');
+        }
+        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    }
+    
     // COST OPTIMIZATION: Use Flash by default (97% cheaper), Pro only when generating detailed plans
     const needsDetailedPlan = history.length > 5 && !task.materials;
     const model = needsDetailedPlan ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
@@ -1069,6 +1112,14 @@ const getTaskChatResponse = async (task, history, property) => {
 };
 
 const getProjectChatResponse = async (history, property, tasks) => {
+    // Check if Gemini AI is initialized
+    if (!ai) {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error('GEMINI_API_KEY environment variable is not set.');
+        }
+        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    }
+    
     // COST OPTIMIZATION: Use Flash for most chat, Pro only for complex analysis
     const hasImages = history.some(msg => msg.role === 'user' && msg.parts.some(part => part.inlineData));
     const isComplexQuery = hasImages || tasks.length > 10 || history.length > 15;
@@ -1139,6 +1190,14 @@ const getProjectChatResponse = async (history, property, tasks) => {
 };
 
 const generateGuidingTaskIntroduction = async (taskTitle, taskRoom, property) => {
+    // Check if Gemini AI is initialized
+    if (!ai) {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error('GEMINI_API_KEY environment variable is not set.');
+        }
+        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    }
+    
     const model = 'gemini-2.5-flash';
     const prompt = `The user is starting a new task: "${taskTitle}" in the room: "${taskRoom}" for their project: "${property.name}". Their overall vision is: "${property.visionStatement || 'Not defined yet'}". 
     Your job is to write a friendly, engaging first message for the task-specific chat window. Ask one or two clarifying questions to help them get started. For example, ask about the current state of the room, their desired outcome, or their skill level. Keep it brief and encouraging.`;
@@ -1149,6 +1208,14 @@ const generateGuidingTaskIntroduction = async (taskTitle, taskRoom, property) =>
 };
 
 const generateProjectSummary = async (property, tasks) => {
+    // Check if Gemini AI is initialized
+    if (!ai) {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error('GEMINI_API_KEY environment variable is not set.');
+        }
+        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    }
+    
     // COST OPTIMIZATION: Always use Flash for summaries (simple task)
     const model = 'gemini-2.5-flash';
     
@@ -1167,6 +1234,14 @@ const generateProjectSummary = async (property, tasks) => {
 };
 
 const generateVisionStatement = async (history) => {
+    // Check if Gemini AI is initialized
+    if (!ai) {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error('GEMINI_API_KEY environment variable is not set.');
+        }
+        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    }
+    
     // COST OPTIMIZATION: Use Flash for vision statements (simple extraction)
     const model = 'gemini-2.5-flash';
     
