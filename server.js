@@ -1068,10 +1068,11 @@ const getProjectChatResponse = async (history, property, tasks) => {
 
 const generateGuidingTaskIntroduction = async (taskTitle, taskRoom, property) => {
     const model = 'gemini-2.5-flash';
-    const context = `The user is starting a new task: "${taskTitle}" in the room: "${taskRoom}" for their project: "${property.name}". Their overall vision is: "${property.visionStatement || 'Not defined yet'}". 
+    const prompt = `The user is starting a new task: "${taskTitle}" in the room: "${taskRoom}" for their project: "${property.name}". Their overall vision is: "${property.visionStatement || 'Not defined yet'}". 
     Your job is to write a friendly, engaging first message for the task-specific chat window. Ask one or two clarifying questions to help them get started. For example, ask about the current state of the room, their desired outcome, or their skill level. Keep it brief and encouraging.`;
 
-    const response = await ai.models.generateContent({ model, contents: context });
+    const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+    const response = await ai.models.generateContent({ model, contents });
     return { role: 'model', parts: [{ text: response.text }] };
 };
 
@@ -1088,7 +1089,8 @@ const generateProjectSummary = async (property, tasks) => {
     - Tasks:\n${taskSummary}
     The summary should be encouraging and reflect the current state of the project.`;
 
-    const response = await ai.models.generateContent({ model, contents: prompt });
+    const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+    const response = await ai.models.generateContent({ model, contents });
     return response.text;
 };
 
@@ -1098,10 +1100,10 @@ const generateVisionStatement = async (history) => {
     
     // COST OPTIMIZATION: Only use last 8 messages for vision extraction
     const recentHistory = history.slice(-8);
-    const prompt = `Analyze the following conversation between a user and an AI assistant about a home renovation project. Based on the user's messages, distill their goals and desired aesthetic into a single, inspiring "Vision Statement" sentence. The statement should be concise and capture the essence of what the user wants to achieve. Return only the vision statement text, without any additional formatting or explanation.`;
+    const systemInstruction = `Analyze the following conversation between a user and an AI assistant about a home renovation project. Based on the user's messages, distill their goals and desired aesthetic into a single, inspiring "Vision Statement" sentence. The statement should be concise and capture the essence of what the user wants to achieve. Return only the vision statement text, without any additional formatting or explanation.`;
     
     const contents = recentHistory.map(msg => ({ role: msg.role, parts: msg.parts }));
-    const response = await ai.models.generateContent({ model, contents: prompt });
+    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction } });
     return response.text.trim().replace(/"/g, "");
 };
 
