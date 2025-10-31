@@ -29,10 +29,16 @@ if (!process.env.GEMINI_API_KEY) {
     process.exit(1);
 }
 
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const MAX_REQUESTS = 20;
+const REQUEST_TIMEOUT = 30000; // 30 seconds
+const MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB
+
 // Rate limiting
 const requestCounts = new Map();
-const RATE_LIMIT_WINDOW = 60 * 1000;
-const MAX_REQUESTS = 20;
 
 function rateLimitMiddleware(req, res, next) {
     const identifier = req.ip || 'unknown';
@@ -52,7 +58,21 @@ function rateLimitMiddleware(req, res, next) {
     next();
 }
 
-// Middleware
+// ============================================================================
+// MIDDLEWARE
+// ============================================================================
+
+// Request timeout middleware - prevents hanging requests
+app.use((req, res, next) => {
+    req.setTimeout(REQUEST_TIMEOUT, () => {
+        if (!res.headersSent) {
+            res.status(504).json({ error: 'Request timeout' });
+        }
+    });
+    next();
+});
+
+// CORS configuration
 const corsOptions = {
     origin: process.env.NODE_ENV === 'production' 
         ? process.env.ALLOWED_ORIGINS?.split(',') || [] 
@@ -61,7 +81,11 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' })); // Limit payload size to prevent DoS
+
+// Body parser with size limit
+app.use(express.json({ limit: `${MAX_PAYLOAD_SIZE / 1024 / 1024}mb` }));
+
+// Rate limiting
 app.use(rateLimitMiddleware);
 
 // SECURITY: Image validation function

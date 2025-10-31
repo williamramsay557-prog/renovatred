@@ -13,6 +13,10 @@ import { ChatWindow } from './components/ChatWindow';
 import { Icon } from './components/Icons';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
+// Constants
+const DEBOUNCE_SUMMARY_MS = 1500;
+const DEBOUNCE_VISION_MS = 2000;
+
 type AppView = 'setup' | 'main';
 type MainView = 'feed' | 'profile' | 'project';
 
@@ -93,7 +97,7 @@ const AppContent: React.FC = () => {
         if (activeProject) {
             const debounceSummary = setTimeout(() => {
                 generateProjectSummary(activeProject.property, activeProject.tasks).then(setProjectSummary);
-            }, 1500);
+            }, DEBOUNCE_SUMMARY_MS);
             return () => clearTimeout(debounceSummary);
         }
     }, [activeProject]);
@@ -106,7 +110,7 @@ const AppContent: React.FC = () => {
                         projectService.updateProperty(activeProject.id, { ...activeProject.property, visionStatement: vision });
                     }
                 });
-            }, 2000);
+            }, DEBOUNCE_VISION_MS);
             return () => clearTimeout(debounceVision);
         }
     }, [activeProject]);
