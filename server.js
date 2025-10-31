@@ -1138,7 +1138,12 @@ const generateVisionStatement = async (history) => {
     return response.text.trim().replace(/"/g, "");
 };
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Backend server running on http://0.0.0.0:${PORT}`);
-});
+// Export app for Vercel serverless functions
+export default app;
+
+// Only start server if not in serverless environment (for local development)
+if (process.env.VERCEL !== '1') {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Backend server running on http://0.0.0.0:${PORT}`);
+    });
+}

@@ -64,39 +64,78 @@ async function apiRequest<T>(
     endpoint: string,
     options: RequestInit = {}
 ): Promise<T> {
-    const token = await getAuthToken();
-    
-    if (!token) {
-        throw new Error('Not authenticated - please sign in');
-    }
-    
-    const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        ...options.headers,
-    };
-    
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers,
-    });
-    
-    if (!response.ok) {
-        let errorMessage = 'Request failed';
-        try {
-            const error = await response.json();
-            errorMessage = error.error || error.message || `API request failed: ${response.status}`;
-            // Include validation details if present
-            if (error.details && Array.isArray(error.details)) {
-                errorMessage += '\nValidation errors: ' + error.details.map((d: any) => d.message || d.path?.join('.')).join(', ');
-            }
-        } catch {
-            errorMessage = `API request failed with status ${response.status}: ${response.statusText}`;
+    try {
+        const token = await getAuthToken();
+        
+        if (!token) {
+            throw new Error('Not authenticated - please sign in');
         }
-        throw new Error(errorMessage);
+        
+        const headers = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            ...options.headers,
+        };
+        
+        const url = `${API_BASE_URL}${endpoint}`;
+        console.log('API Request:', { method: options.method || 'GET', url, hasBody: !!options.body });
+        
+        const response = await fetch(url, {
+            ...options,
+            headers,
+        });
+        
+        console.log('API Response:', { status: response.status, statusText: response.statusText, ok: response.ok });
+        
+        if (!response.ok) {
+            let errorMessage = `API request failed with status ${response.status}`;
+            let errorDetails: any = null;
+            
+            try {
+                const error = await response.json();
+                errorDetails = error;
+                errorMessage = error.error || error.message || errorMessage;
+                
+                // Include validation details if present
+                if (error.details && Array.isArray(error.details)) {
+                    const validationErrors = error.details.map((d: any) => {
+                        const path = d.path ? d.path.join('.') : 'unknown';
+                        return `${path}: ${d.message || d.msg || 'validation error'}`;
+                    }).join(', ');
+                    errorMessage += `\nValidation errors: ${validationErrors}`;
+                } else if (error.message) {
+                    errorMessage += `\n${error.message}`;
+                }
+            } catch (parseError) {
+                // Couldn't parse JSON - might be HTML error page or network error
+                try {
+                    const text = await response.text();
+                    console.error('Non-JSON error response:', text.substring(0, 200));
+                    errorMessage += `: ${response.statusText}`;
+                    if (text && text.length < 200) {
+                        errorMessage += `\nResponse: ${text}`;
+                    }
+                } catch {
+                    errorMessage += `: ${response.statusText}`;
+                }
+            }
+            
+            console.error('API Error:', { endpoint, status: response.status, errorMessage, errorDetails });
+            throw new Error(errorMessage);
+        }
+        
+        return response.json();
+    } catch (error) {
+        // Re-throw with additional context if it's not already our custom error
+        if (error instanceof Error) {
+            // Check if it's a network error
+            if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                throw new Error(`Network error: Cannot connect to backend server. Make sure the server is running on port 3000.\nOriginal error: ${error.message}`);
+            }
+            throw error;
+        }
+        throw new Error(`Unexpected error: ${String(error)}`);
     }
-    
-    return response.json();
 }
 
 // ============================================================================

@@ -39,10 +39,13 @@ export const PropertySetup: React.FC<PropertySetupProps> = ({ onPropertyCreate }
       } as Omit<Property, 'id'> & { id?: never };
       
       try {
+        console.log('Creating project with property:', property);
         await onPropertyCreate(property);
       } catch (error) {
         console.error('Failed to create property:', error);
-        alert(`Failed to create project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('Full error details:', error);
+        alert(`Failed to create project:\n${errorMessage}\n\nCheck the browser console (F12) for more details.`);
         setIsCreating(false);
       }
       // Note: If successful, component will unmount, so we don't need to reset isCreating
