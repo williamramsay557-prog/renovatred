@@ -5,6 +5,24 @@ Renovatr is a UK-focused DIY home renovation planning application. It helps user
 
 ## Recent Changes
 
+### October 31, 2025 - Context-Aware AI & Enhanced Profile Features
+- **Context-Aware AI Task Suggestions**: AI now requests room photos and context before suggesting tasks
+  - Checks for visual context (photos in chat or room photos)
+  - Analyzes conversation depth before making suggestions
+  - Proactively asks for photos when more efficient than descriptions
+  - Only suggests tasks when it has sufficient understanding of user's needs
+  - Personalized recommendations based on actual room conditions
+- **Comprehensive Profile Page**: Built out full settings and preferences system
+  - **Overview Tab**: User bio, location, skill level badges, friend management, project list
+  - **Settings Tab**: Notification preferences (email, task reminders, friend activity, weekly digest)
+  - **Privacy Settings**: Profile visibility, project sharing controls
+  - **Preferences Tab**: DIY skill level, budget range, measurement units (metric/imperial)
+  - **Account Tab**: Account information and danger zone
+  - Added `UserPreferences` type with extensive customization options
+  - Created new `ProfilePage.tsx` component with tabbed interface
+  - Added `updateUserProfile` function to authService for profile updates
+- **Type System Updates**: Extended User interface with email and preferences fields
+
 ### October 31, 2025 - Comprehensive Security & Quality Audit
 - **Security Hardening**: Completed comprehensive security audit based on external evaluation
   - Verified GEMINI_API_KEY never exposed client-side (server-only)

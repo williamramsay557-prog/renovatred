@@ -7,11 +7,32 @@ export interface Part {
     };
 }
 
+export interface UserPreferences {
+    skillLevel: 'beginner' | 'intermediate' | 'advanced' | 'professional';
+    budgetRange: 'tight' | 'moderate' | 'flexible' | 'unlimited';
+    measurementUnit: 'metric' | 'imperial';
+    notifications: {
+        email: boolean;
+        taskReminders: boolean;
+        friendActivity: boolean;
+        weeklyDigest: boolean;
+    };
+    privacy: {
+        profileVisibility: 'public' | 'friends' | 'private';
+        showProjects: boolean;
+        showProgress: boolean;
+    };
+    location?: string;
+    bio?: string;
+}
+
 export interface User {
     id: string;
     name: string;
     avatarUrl: string;
     friendIds: string[];
+    email?: string;
+    preferences?: UserPreferences;
 }
 
 export interface Comment {

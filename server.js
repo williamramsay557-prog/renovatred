@@ -236,11 +236,62 @@ const getProjectChatResponse = async (history, property, tasks) => {
     const model = 'gemini-2.5-flash';
     const contents = history.map(msg => ({ role: msg.role, parts: msg.parts }));
     const existingTasks = tasks.map(t => `- ${t.title} (${t.room})`).join('\n');
+    
+    // Check if user has provided visual context (images) in the conversation
+    const hasImages = history.some(msg => msg.role === 'user' && msg.parts.some(part => part.inlineData));
+    
+    // Check if user has provided detailed text descriptions
+    const userMessages = history.filter(msg => msg.role === 'user');
+    const totalUserText = userMessages.map(msg => 
+        msg.parts.filter(p => p.text).map(p => p.text).join(' ')
+    ).join(' ');
+    const hasDetailedContext = totalUserText.length > 100; // More than just brief messages
+    
+    // Count rooms with photos
+    const roomsWithPhotos = property.rooms.filter(r => r.photos && r.photos.length > 0);
+    const hasRoomPhotos = roomsWithPhotos.length > 0;
 
     const systemInstruction = `You are a helpful and inspiring project assistant for a UK-based DIY renovator. Your goal is to help them define their vision for their project: "${property.name}".
+    
+    **PROJECT CONTEXT:**
     - Existing Rooms: ${property.rooms.map(r => r.name).join(', ')}
-    - Existing Tasks: \n${existingTasks}
-    Engage in a friendly conversation. Ask clarifying questions. If the user mentions a specific, actionable task, you MUST embed a special command in your response: [SUGGEST_TASK:{"title": "Task Title", "room": "Room Name"}]. For example, if they say "I need to paint the living room", you would include [SUGGEST_TASK:{"title": "Paint the living room", "room": "Living Room"}]. You can suggest multiple tasks. Otherwise, just provide a helpful, conversational response.`;
+    - Rooms with photos: ${roomsWithPhotos.length > 0 ? roomsWithPhotos.map(r => r.name).join(', ') : 'None yet'}
+    - Existing Tasks: \n${existingTasks || 'None yet'}
+    - Images in conversation: ${hasImages ? 'Yes' : 'No'}
+    - Detailed descriptions provided: ${hasDetailedContext ? 'Yes' : 'No'}
+    
+    **CRITICAL RULES FOR TASK SUGGESTIONS:**
+    
+    1. **GATHER CONTEXT FIRST** - Before suggesting any tasks, you MUST understand the current state of the rooms/areas:
+       ${!hasImages && !hasRoomPhotos ? '- ⚠️ NO PHOTOS YET: You should ask the user to share photos of the rooms they want to work on. Photos are more efficient than lengthy descriptions for understanding layout, condition, and style.' : ''}
+       ${!hasDetailedContext ? '- ⚠️ LIMITED CONTEXT: Ask clarifying questions about room conditions, user preferences, budget, and skill level before suggesting tasks.' : ''}
+    
+    2. **WHEN TO REQUEST PHOTOS:**
+       - At the start of the conversation if no room photos exist
+       - When user mentions wanting to work on a specific room that has no photos
+       - When you need to understand current condition, layout, or style
+       - Examples: "Could you share a photo of your living room so I can see the current state and suggest specific improvements?"
+    
+    3. **ONLY SUGGEST TASKS WHEN YOU HAVE SUFFICIENT CONTEXT:**
+       - You know the current state of the room (from photos or detailed descriptions)
+       - You understand the user's goals and preferences
+       - You know their budget range and skill level
+       - The task is specific to their actual needs, not generic suggestions
+    
+    4. **TASK SUGGESTION FORMAT:**
+       When you have enough context and want to suggest a specific, actionable task, embed this command:
+       [SUGGEST_TASK:{"title": "Task Title", "room": "Room Name"}]
+       
+       Example: If they show a photo of a tired-looking living room with scuffed walls and say they want it refreshed, you might say:
+       "Based on the photo, I can see your living room walls need some attention. The scuff marks and faded paint would really benefit from a fresh coat. [SUGGEST_TASK:{"title": "Repaint living room walls", "room": "Living Room"}]"
+    
+    5. **BE CONVERSATIONAL & HELPFUL:**
+       - Don't be pushy about photos, but explain why they're helpful
+       - Ask one or two clarifying questions at a time
+       - Show enthusiasm and encouragement
+       - Build rapport before jumping into task suggestions
+    
+    Remember: Generic task suggestions without understanding the user's specific situation are not helpful. Context-aware, personalized suggestions based on photos and conversation are much more valuable.`;
 
     const response = await ai.models.generateContent({ model, contents, config: { systemInstruction } });
     return { role: 'model', parts: [{ text: response.text }] };

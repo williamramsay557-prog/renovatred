@@ -112,3 +112,38 @@ export const getSession = () => {
 export const onAuthStateChange = (callback: (event: string, session: Session | null) => void) => {
     return supabase.auth.onAuthStateChange(callback);
 }
+
+/**
+ * Update user profile information
+ * @param {string} userId - User ID
+ * @param {Partial<User>} updates - User profile updates
+ * @returns {Promise<User | null>} Updated user object
+ */
+export const updateUserProfile = async (userId: string, updates: Partial<User>): Promise<User | null> => {
+    try {
+        const { data, error } = await supabase
+            .from('users')
+            .update({
+                ...(updates.name && { name: updates.name }),
+                ...(updates.avatarUrl && { avatar_url: updates.avatarUrl }),
+                ...(updates.email && { email: updates.email }),
+                ...(updates.preferences && { preferences: updates.preferences }),
+            })
+            .eq('id', userId)
+            .select()
+            .single();
+
+        if (error) {
+            logger.error('Failed to update user profile', error, { userId });
+            return null;
+        }
+
+        return {
+            ...data,
+            avatarUrl: data.avatar_url,
+        };
+    } catch (error) {
+        logger.error('Unexpected error in updateUserProfile', error);
+        return null;
+    }
+};

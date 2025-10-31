@@ -5,7 +5,8 @@ import * as authService from './services/authService';
 import { generateTaskDetails, getTaskChatResponse, getProjectChatResponse, generateProjectSummary, generateGuidingTaskIntroduction, generateVisionStatement } from './services/geminiService';
 import { PropertySetup } from './components/PropertySetup';
 import { Auth } from './components/Auth';
-import { GlobalNav, FeedPage, ProfilePage } from './components/SocialComponents';
+import { GlobalNav, FeedPage } from './components/SocialComponents';
+import { ProfilePage } from './components/ProfilePage';
 import { Header, KanbanColumn, TaskDetailModal, Overview } from './components/AppComponents';
 import { RoomProgress } from './components/RoomProgress';
 import { ChatWindow } from './components/ChatWindow';
@@ -420,6 +421,14 @@ const AppContent: React.FC = () => {
         await projectService.removeFriend(currentUser.id, friendId);
         if (currentUser) await fetchDataForUser(currentUser.id);
     }
+    
+    const handleUpdateProfile = async (updates: Partial<User>) => {
+        if (!currentUser) return;
+        const updatedUser = await authService.updateUserProfile(currentUser.id, updates);
+        if (updatedUser && currentUser) {
+            setCurrentUser({ ...currentUser, ...updatedUser });
+        }
+    };
 
     // -- RENDER LOGIC --
     const { totalSpent, totalEstimated } = useMemo(() => {
@@ -488,7 +497,7 @@ const AppContent: React.FC = () => {
             <GlobalNav activeView={mainView} setView={setMainView} user={currentUser} />
             <main className="flex-1 overflow-hidden">
                 {mainView === 'feed' && <FeedPage posts={feedPosts} allUsers={allUsers} currentUser={currentUser} activeProject={activeProject} onCreatePost={handleCreatePost} onLikePost={handleLikePost} onAddComment={handleAddComment} postPrompt={postPrompt} onStartProject={() => setAppView('setup')} />}
-                {mainView === 'profile' && <ProfilePage user={currentUser} projects={projects} allUsers={allUsers} onSetActiveProject={setActiveProjectId} onStartNewProject={() => setAppView('setup')} onDeleteProject={handleDeleteProject} onAddFriend={handleAddFriend} onRemoveFriend={handleRemoveFriend}/>}
+                {mainView === 'profile' && <ProfilePage user={currentUser} projects={projects} allUsers={allUsers} onSetActiveProject={setActiveProjectId} onStartNewProject={() => setAppView('setup')} onDeleteProject={handleDeleteProject} onAddFriend={handleAddFriend} onRemoveFriend={handleRemoveFriend} onUpdateProfile={handleUpdateProfile} />}
                 {mainView === 'project' && (
                     <div className="flex flex-col h-full">
                         {activeProject ? (
