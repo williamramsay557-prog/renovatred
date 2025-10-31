@@ -61,28 +61,76 @@ const AppContent: React.FC = () => {
 
     const fetchDataForUser = useCallback(async (userId: string) => {
         setIsLoading(true);
-        const [user, userProjects, userFeed, allUsersData] = await Promise.all([
-            authService.getCurrentUser(),
-            projectService.getProjectsForUser(userId),
-            projectService.getFeedForUser(userId),
-            projectService.getAllUsers(),
-        ]);
-        setCurrentUser(user);
-        setProjects(userProjects);
-        setFeedPosts(userFeed);
-        setAllUsers(allUsersData);
-        if (userProjects.length > 0) {
-            setActiveProjectId(currentId => currentId || userProjects[0].id);
-            setAppView('main');
-        } else {
-             setAppView('setup');
+        try {
+            // Use Promise.allSettled to handle partial failures gracefully
+            const [userResult, projectsResult, feedResult, usersResult] = await Promise.allSettled([
+                authService.getCurrentUser(),
+                projectService.getProjectsForUser(userId),
+                projectService.getFeedForUser(userId),
+                projectService.getAllUsers(),
+            ]);
+
+            // Handle user profile
+            if (userResult.status === 'fulfilled') {
+                setCurrentUser(userResult.value);
+                // If user profile doesn't exist, that's a problem - log it
+                if (!userResult.value) {
+                    console.error('User profile not found. User may need to complete signup or profile creation trigger may have failed.');
+                }
+            } else {
+                console.error('Failed to fetch user profile:', userResult.reason);
+                setCurrentUser(null);
+            }
+
+            // Handle projects
+            if (projectsResult.status === 'fulfilled') {
+                setProjects(projectsResult.value);
+                if (projectsResult.value.length > 0) {
+                    setActiveProjectId(currentId => currentId || projectsResult.value[0].id);
+                    setAppView('main');
+                } else {
+                    setAppView('setup');
+                }
+            } else {
+                console.error('Failed to fetch projects:', projectsResult.reason);
+                setProjects([]);
+                setAppView('setup');
+            }
+
+            // Handle feed
+            if (feedResult.status === 'fulfilled') {
+                setFeedPosts(feedResult.value);
+            } else {
+                console.error('Failed to fetch feed:', feedResult.reason);
+                setFeedPosts([]);
+            }
+
+            // Handle all users
+            if (usersResult.status === 'fulfilled') {
+                setAllUsers(usersResult.value);
+            } else {
+                console.error('Failed to fetch all users:', usersResult.reason);
+                setAllUsers([]);
+            }
+        } catch (error) {
+            console.error('Unexpected error in fetchDataForUser:', error);
+            // Set safe defaults on error
+            setCurrentUser(null);
+            setProjects([]);
+            setFeedPosts([]);
+            setAllUsers([]);
+            setAppView('setup');
+        } finally {
+            setIsLoading(false);
         }
-        setIsLoading(false);
     }, []);
 
     useEffect(() => {
         if (session?.user) {
-            fetchDataForUser(session.user.id);
+            fetchDataForUser(session.user.id).catch((error) => {
+                console.error('Error in fetchDataForUser:', error);
+                setIsLoading(false);
+            });
         } else {
             setCurrentUser(null);
             setProjects([]);

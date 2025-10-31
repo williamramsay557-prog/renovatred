@@ -6,7 +6,11 @@ import { logger } from '../utils/logger';
 export type { Session };
 
 /**
- * Retrieves the currently authenticated user with their profile and friends
+ * Retrieves the currently authenticated user with their profile and friends.
+ * 
+ * If the user profile doesn't exist, attempts to create it from the auth user metadata.
+ * This handles cases where the database trigger may have failed.
+ * 
  * @returns {Promise<User | null>} User object or null if not authenticated
  */
 export const getCurrentUser = async (): Promise<User | null> => {
@@ -21,26 +25,59 @@ export const getCurrentUser = async (): Promise<User | null> => {
             return null;
         }
 
-        const { data: userProfile, error: profileError } = await supabase
+        const userId = session.user.id;
+
+        // Try to fetch existing profile
+        let { data: userProfile, error: profileError } = await supabase
             .from('users')
             .select('*')
-            .eq('id', session.user.id)
+            .eq('id', userId)
             .single();
         
-        if (profileError) {
-            logger.error('Failed to fetch user profile', profileError, { userId: session.user.id });
+        // If profile doesn't exist, try to create it from auth metadata
+        if (profileError && profileError.code === 'PGRST116') {
+            logger.warn('User profile not found, attempting to create from auth metadata', { userId });
+            
+            const fullName = session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User';
+            const avatarUrl = session.user.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=random`;
+            
+            const { data: newProfile, error: createError } = await supabase
+                .from('users')
+                .insert({
+                    id: userId,
+                    name: fullName,
+                    avatar_url: avatarUrl,
+                    email: session.user.email,
+                    preferences: {},
+                })
+                .select()
+                .single();
+            
+            if (createError) {
+                logger.error('Failed to create user profile', createError, { userId });
+                return null;
+            }
+            
+            userProfile = newProfile;
+            logger.info('Created user profile from auth metadata', { userId });
+        } else if (profileError) {
+            logger.error('Failed to fetch user profile', profileError, { userId });
             return null;
         }
 
-        // Fetch friend IDs
+        // Fetch friend IDs (non-critical, can fail gracefully)
         const { data: friends, error: friendsError } = await supabase
             .from('friends')
             .select('user_id_2')
-            .eq('user_id_1', session.user.id);
+            .eq('user_id_1', userId);
 
         if (friendsError) {
-            logger.error('Failed to fetch user friends', friendsError, { userId: session.user.id });
-            return { ...userProfile, avatarUrl: userProfile.avatar_url, friendIds: [] };
+            logger.warn('Failed to fetch user friends (non-critical)', friendsError, { userId });
+            return { 
+                ...userProfile, 
+                avatarUrl: userProfile.avatar_url,
+                friendIds: [] 
+            };
         }
 
         return { 
