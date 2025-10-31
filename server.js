@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 
 const app = express();
 const PORT = 3000;
@@ -136,6 +137,67 @@ const verifyAuth = async (req, res, next) => {
         console.error('Auth middleware error:', error);
         return res.status(500).json({ error: 'Internal authentication error' });
     }
+};
+
+// ============================================================================
+// REQUEST VALIDATION SCHEMAS
+// ============================================================================
+
+const roomSchema = z.object({
+    name: z.string().min(1).max(100),
+    photos: z.array(z.string().url()).optional().default([]),
+    id: z.string().uuid().optional()
+});
+
+const propertySchema = z.object({
+    id: z.string().uuid().optional(),
+    name: z.string().min(1).max(200),
+    rooms: z.array(roomSchema),
+    visionStatement: z.string().optional(),
+    projectChatHistory: z.array(z.any()).optional()
+});
+
+const taskSchema = z.object({
+    id: z.string().uuid().optional(),
+    projectId: z.string().uuid(),
+    title: z.string().min(1).max(300),
+    room: z.string().min(1).max(100),
+    description: z.string().optional(),
+    materials: z.array(z.any()).optional(),
+    tools: z.array(z.any()).optional(),
+    cost: z.number().optional(),
+    safetyWarnings: z.array(z.string()).optional(),
+    chatHistory: z.array(z.any()).optional(),
+    isComplete: z.boolean().optional(),
+    hiringInfo: z.any().optional(),
+    hasBeenOpened: z.boolean().optional()
+});
+
+const imageUploadSchema = z.object({
+    dataUrl: z.string().regex(/^data:image\/(jpeg|png|webp|gif);base64,/),
+    fileNamePrefix: z.string().min(1).max(50)
+});
+
+/**
+ * Validation middleware factory
+ * Creates middleware to validate request body against a Zod schema
+ */
+const validateRequest = (schema) => {
+    return (req, res, next) => {
+        try {
+            const validated = schema.parse(req.body);
+            req.validated = validated;
+            next();
+        } catch (error) {
+            if (error instanceof z.ZodError) {
+                return res.status(400).json({ 
+                    error: 'Validation failed', 
+                    details: error.errors 
+                });
+            }
+            return res.status(400).json({ error: 'Invalid request body' });
+        }
+    };
 };
 
 // Health check endpoint
