@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 import { Project, Task, FeedPost, ChatMessage, Room, User, Property, Comment } from '../types';
-import { v4 as uuidv4 } from 'uuid'; // For generating unique file paths
+import { v4 as uuidv4 } from 'uuid';
+import { logger } from '../utils/logger';
 
 // Helper to convert base64 to a File object for uploading
 const dataURLtoFile = (dataurl: string, filename: string): File | null => {
@@ -18,25 +19,41 @@ const dataURLtoFile = (dataurl: string, filename: string): File | null => {
     return new File([u8arr], filename, {type:mime});
 }
 
-// --- Image Upload ---
+/**
+ * Upload an image to Supabase storage
+ * @param {string} dataUrl - Base64 encoded image data URL
+ * @param {string} fileNamePrefix - Prefix for the uploaded file name
+ * @returns {Promise<string>} Public URL of the uploaded image
+ * @throws {Error} If image conversion or upload fails
+ */
 export const uploadImage = async (dataUrl: string, fileNamePrefix: string): Promise<string> => {
-    const file = dataURLtoFile(dataUrl, `${fileNamePrefix}.png`);
-    if (!file) throw new Error("Could not convert data URL to file");
-    
-    const filePath = `public/${fileNamePrefix}-${uuidv4()}`;
-    const { error: uploadError } = await supabase.storage
-        .from('images')
-        .upload(filePath, file);
+    try {
+        const file = dataURLtoFile(dataUrl, `${fileNamePrefix}.png`);
+        if (!file) {
+            logger.error('Failed to convert data URL to file', undefined, { fileNamePrefix });
+            throw new Error("Could not convert data URL to file");
+        }
+        
+        const filePath = `public/${fileNamePrefix}-${uuidv4()}`;
+        const { error: uploadError } = await supabase.storage
+            .from('images')
+            .upload(filePath, file);
 
-    if (uploadError) {
-        throw uploadError;
+        if (uploadError) {
+            logger.error('Failed to upload image to storage', uploadError, { filePath });
+            throw uploadError;
+        }
+
+        const { data } = supabase.storage
+            .from('images')
+            .getPublicUrl(filePath);
+        
+        logger.info('Image uploaded successfully', { filePath, url: data.publicUrl });
+        return data.publicUrl;
+    } catch (error) {
+        logger.error('Unexpected error in uploadImage', error, { fileNamePrefix });
+        throw error;
     }
-
-    const { data } = supabase.storage
-        .from('images')
-        .getPublicUrl(filePath);
-    
-    return data.publicUrl;
 };
 
 // --- User & Friend Management ---

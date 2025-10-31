@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Project, Task, FeedPost, ChatMessage, View, TaskStatus, User, Room, Comment, Property, Part } from './types';
+import { Project, Task, FeedPost, ChatMessage, View, TaskStatus, User, Property, Part } from './types';
 import * as projectService from './services/projectService';
 import * as authService from './services/authService';
 import { generateTaskDetails, getTaskChatResponse, getProjectChatResponse, generateProjectSummary, generateGuidingTaskIntroduction, generateVisionStatement } from './services/geminiService';
-import { LandingPage } from './components/LandingPage';
 import { PropertySetup } from './components/PropertySetup';
 import { Auth } from './components/Auth';
 import { GlobalNav, FeedPage, ProfilePage } from './components/SocialComponents';
@@ -239,7 +238,7 @@ const AppContent: React.FC = () => {
             const freshTask = freshProject.tasks.find(t => t.id === taskId)!;
             const modelResponse = await getTaskChatResponse(freshTask, freshTask.chatHistory, freshProject.property);
             
-            let responseText = (modelResponse.parts[0] as {text: string}).text;
+            const responseText = (modelResponse.parts[0] as {text: string}).text;
 
             if (responseText.includes('[GENERATE_PLAN]')) {
                 responseText = responseText.replace('[GENERATE_PLAN]', '').trim();
@@ -305,10 +304,10 @@ const AppContent: React.FC = () => {
             if (!freshProject) throw new Error("Project not found");
             const modelResponse = await getProjectChatResponse(freshProject.property.projectChatHistory, freshProject.property, freshProject.tasks);
 
-            let responseText = (modelResponse.parts[0] as {text: string}).text;
+            const responseText = (modelResponse.parts[0] as {text: string}).text;
             const suggestionRegex = /\[SUGGEST_TASK:(.*?})\]/g;
             const suggestions = [];
-            let cleanText = responseText.replace(suggestionRegex, (match, json) => {
+            const cleanText = responseText.replace(suggestionRegex, (match, json) => {
                 try {
                     suggestions.push(JSON.parse(json));
                 } catch (e) { console.error("Failed to parse task suggestion", e) }
