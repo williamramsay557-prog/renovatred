@@ -7,6 +7,22 @@
     <meta name="theme-color" content="#1E3A8A" />
     <title>Renovatr</title>
     <link rel="manifest" href="/manifest.json" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'brand-primary': '#1E3A8A',
+              'brand-secondary': '#3B82F6',
+              'brand-accent': '#F59E0B',
+              'brand-light': '#F3F4F6',
+              'brand-dark': '#111827',
+            },
+          }
+        }
+      }
+    </script>
 <script type="importmap">
 {
   "imports": {

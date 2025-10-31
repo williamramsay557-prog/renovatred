@@ -8,6 +8,15 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5000,
     allowedHosts: true, // Allow all hosts (required for Replit preview)
+    watch: {
+      ignored: [
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/.replit',
+        '**/.cache/**',
+        '**/package-lock.json'
+      ]
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
