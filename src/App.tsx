@@ -266,12 +266,27 @@ const AppContent: React.FC = () => {
             } else {
                 await projectService.addMessageToTaskChat(activeProject.id, taskId, modelResponse);
             }
+            
+            // Seamlessly update only this project in state (no full refresh)
+            const updatedProject = await projectService.getProjectById(activeProject.id);
+            if (updatedProject) {
+                setProjects(projects.map(p => p.id === updatedProject.id ? updatedProject : p));
+                const updatedTask = updatedProject.tasks.find(t => t.id === taskId);
+                if (updatedTask) setSelectedTask(updatedTask);
+            }
         } catch (error) {
             console.error(error);
             const errorMessage: ChatMessage = { role: 'model', parts: [{ text: "Sorry, I couldn't get a response. Please try again." }] };
             await projectService.addMessageToTaskChat(activeProject.id, taskId, errorMessage);
+            
+            // Update state with error message
+            const updatedProject = await projectService.getProjectById(activeProject.id);
+            if (updatedProject) {
+                setProjects(projects.map(p => p.id === updatedProject.id ? updatedProject : p));
+                const updatedTask = updatedProject.tasks.find(t => t.id === taskId);
+                if (updatedTask) setSelectedTask(updatedTask);
+            }
         } finally {
-            if (currentUser) await fetchDataForUser(currentUser.id);
             setIsTaskChatLoading(false);
         }
     };
@@ -317,12 +332,23 @@ const AppContent: React.FC = () => {
             const finalModelResponse: ChatMessage = { role: 'model', parts: [{ text: cleanText }] };
             if (suggestions.length > 0) finalModelResponse.suggestions = suggestions;
             await projectService.addMessageToProjectChat(activeProject.id, finalModelResponse);
+            
+            // Seamlessly update only this project in state (no full refresh)
+            const updatedProject = await projectService.getProjectById(activeProject.id);
+            if (updatedProject) {
+                setProjects(projects.map(p => p.id === updatedProject.id ? updatedProject : p));
+            }
         } catch (error) {
             console.error(error);
             const errorMessage: ChatMessage = { role: 'model', parts: [{ text: "Sorry, I couldn't get a response. Please try again." }] };
             await projectService.addMessageToProjectChat(activeProject.id, errorMessage);
+            
+            // Update state with error message
+            const updatedProject = await projectService.getProjectById(activeProject.id);
+            if (updatedProject) {
+                setProjects(projects.map(p => p.id === updatedProject.id ? updatedProject : p));
+            }
         } finally {
-            if (currentUser) await fetchDataForUser(currentUser.id);
             setIsProjectChatLoading(false);
         }
     };
