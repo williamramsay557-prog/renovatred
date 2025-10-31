@@ -238,7 +238,7 @@ const AppContent: React.FC = () => {
             const freshTask = freshProject.tasks.find(t => t.id === taskId)!;
             const modelResponse = await getTaskChatResponse(freshTask, freshTask.chatHistory, freshProject.property);
             
-            const responseText = (modelResponse.parts[0] as {text: string}).text;
+            let responseText = (modelResponse.parts[0] as {text: string}).text;
 
             if (responseText.includes('[GENERATE_PLAN]')) {
                 responseText = responseText.replace('[GENERATE_PLAN]', '').trim();
