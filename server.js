@@ -219,12 +219,19 @@ const validateRequest = (schema) => {
             next();
         } catch (error) {
             if (error instanceof z.ZodError) {
+                console.error('Validation error:', error.errors);
+                const errorMessage = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
                 return res.status(400).json({ 
                     error: 'Validation failed', 
+                    message: errorMessage,
                     details: error.errors 
                 });
             }
-            return res.status(400).json({ error: 'Invalid request body' });
+            console.error('Request validation error:', error);
+            return res.status(400).json({ 
+                error: 'Invalid request body', 
+                message: error.message || 'Invalid request' 
+            });
         }
     };
 };

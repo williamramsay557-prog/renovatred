@@ -82,8 +82,18 @@ async function apiRequest<T>(
     });
     
     if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Request failed' }));
-        throw new Error(error.error || `API request failed: ${response.status}`);
+        let errorMessage = 'Request failed';
+        try {
+            const error = await response.json();
+            errorMessage = error.error || error.message || `API request failed: ${response.status}`;
+            // Include validation details if present
+            if (error.details && Array.isArray(error.details)) {
+                errorMessage += '\nValidation errors: ' + error.details.map((d: any) => d.message || d.path?.join('.')).join(', ');
+            }
+        } catch {
+            errorMessage = `API request failed with status ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
     }
     
     return response.json();
