@@ -24,6 +24,10 @@ Renovatr is a UK-focused DIY home renovation planning application. It helps user
   - Critical fix: Add search_path to handle_new_user function (2 min)
   - Optional: Enable leaked password protection in Auth settings
   - Post-launch: RLS performance optimization when at scale
+- **Documentation Cleanup**: Removed 15 outdated .md files
+  - Deleted old audit reports, phase summaries, and redundant guides
+  - Kept only active legal docs, setup guides, and deployment documentation
+  - Reduced documentation files from 25 to 10 essential files
 - **Required Setup**: Supabase Storage bucket "images" must be created
   - See SUPABASE_STORAGE_SETUP.md for 5-minute setup guide
   - Bucket must be public for photo display
