@@ -2,6 +2,26 @@ import { supabase } from './supabaseClient';
 import { Project, Task, FeedPost, ChatMessage, Room, User, Property, Comment } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils/logger';
+import { 
+    apiGetProjects, 
+    apiGetProject, 
+    apiCreateProject, 
+    apiUpdateProject, 
+    apiDeleteProject,
+    apiCreateTask,
+    apiUpdateTask,
+    apiDeleteTask,
+    apiCreateRoom,
+    apiDeleteRoom,
+    apiAddPhotoToRoom,
+    apiUploadImage
+} from './apiClient';
+
+// ============================================================================
+// FEATURE FLAG: Server-Side API Migration
+// Set to true to use secure server-side API, false for legacy client-side
+// ============================================================================
+const USE_SERVER_API = false; // TODO: Enable after RLS policies are deployed
 
 // Helper to convert base64 to a File object for uploading
 const dataURLtoFile = (dataurl: string, filename: string): File | null => {
@@ -85,7 +105,19 @@ export const removeFriend = async (currentUserId: string, friendId: string): Pro
 };
 
 // --- Project Management ---
+
+/**
+ * Get all projects for a user
+ * @param userId - User ID (ignored when USE_SERVER_API is true, uses auth token)
+ */
 export const getProjectsForUser = async (userId: string): Promise<Project[]> => {
+    if (USE_SERVER_API) {
+        logger.info('Fetching projects via server API');
+        return await apiGetProjects();
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side project fetch');
     const { data: projectsData, error } = await supabase
         .from('projects')
         .select(`
@@ -105,7 +137,7 @@ export const getProjectsForUser = async (userId: string): Promise<Project[]> => 
         id: p.id,
         userId: p.user_id,
         property: {
-            id: p.id, // property and project are 1:1 in this model
+            id: p.id,
             name: p.name,
             rooms: p.rooms.map((r: any) => ({...r, aiSummary: r.ai_summary})),
             visionStatement: p.vision_statement,
@@ -117,11 +149,25 @@ export const getProjectsForUser = async (userId: string): Promise<Project[]> => 
             hiringInfo: t.hiring_info,
             hasBeenOpened: t.has_been_opened
         })),
-        feedPosts: [] // Feed posts are fetched separately
+        feedPosts: []
     }));
 };
 
 export const getProjectById = async (projectId: string): Promise<Project | undefined> => {
+    if (USE_SERVER_API) {
+        logger.info('Fetching project by ID via server API', { projectId });
+        try {
+            return await apiGetProject(projectId);
+        } catch (error) {
+            if (error instanceof Error && error.message.includes('404')) {
+                return undefined;
+            }
+            throw error;
+        }
+    }
+    
+    // Legacy client-side method
+    logger.warn('Using legacy client-side project fetch by ID');
     const { data, error } = await supabase
         .from('projects')
         .select(`
