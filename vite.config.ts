@@ -7,6 +7,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5000,
+    allowedHosts: true, // Allow all hosts (required for Replit preview)
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
