@@ -5,6 +5,23 @@ Renovatr is a UK-focused DIY home renovation planning application. It helps user
 
 ## Recent Changes
 
+### October 31, 2025 - UI Fixes & Image Upload Error Handling
+- **Fixed UI Issues**: Resolved multiple UI/UX problems
+  - Fixed constant page refreshing (Vite config ignores .replit files)
+  - Restored Tailwind colors (rolled back PostCSS v4 migration to CDN)
+  - Fixed scroll blocking on Feed and Profile pages (overflow-y-auto)
+  - Fixed "Start Planning" button validation (removed invalid temp IDs)
+  - Fixed email confirmation redirects (added emailRedirectTo parameter)
+- **Image Upload Error Handling**: Added comprehensive error feedback
+  - Photo uploads now show clear error messages when failing
+  - Chat image uploads prevent message send if upload fails
+  - User-friendly alerts guide users to create Supabase storage bucket
+  - Created SUPABASE_STORAGE_SETUP.md guide for bucket setup
+- **Required Setup**: Supabase Storage bucket "images" must be created
+  - See SUPABASE_STORAGE_SETUP.md for 5-minute setup guide
+  - Bucket must be public for photo display
+  - Server-side upload with user-scoped folders (public/{userId}/)
+
 ### October 31, 2025 - Production Security Infrastructure (Phase 2) ✅ COMPLETE
 - **Database Security (RLS)**: Deployed 56 comprehensive Row-Level Security policies
   - 28 policies across 8 tables (users, projects, tasks, rooms, friends, feed_posts, post_comments, post_likes)

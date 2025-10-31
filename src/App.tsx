@@ -199,9 +199,14 @@ const AppContent: React.FC = () => {
     
     const handleAddPhotoToRoom = async (roomId: string, photoDataUrl: string) => {
         if (activeProject) {
-            const imageUrl = await projectService.uploadImage(photoDataUrl, `room_${roomId}_${Date.now()}`);
-            await projectService.addPhotoToRoom(activeProject.id, roomId, imageUrl);
-            if (currentUser) await fetchDataForUser(currentUser.id);
+            try {
+                const imageUrl = await projectService.uploadImage(photoDataUrl, `room_${roomId}_${Date.now()}`);
+                await projectService.addPhotoToRoom(activeProject.id, roomId, imageUrl);
+                if (currentUser) await fetchDataForUser(currentUser.id);
+            } catch (error) {
+                console.error('Failed to upload photo:', error);
+                alert(`Failed to upload photo: ${error instanceof Error ? error.message : 'Unknown error'}. Please make sure you have created the "images" storage bucket in Supabase.`);
+            }
         }
     };
 
@@ -210,18 +215,25 @@ const AppContent: React.FC = () => {
         if (!activeProject || !currentUser) return;
 
         // Upload images to storage but keep them as inline data for display
-        const processedParts = await Promise.all(parts.map(async part => {
-            if (part.inlineData) {
-                // Upload to storage for persistence
-                await projectService.uploadImage(
-                    `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
-                    `task_${taskId}_${Date.now()}`
-                );
-                // Keep the inline data for display in chat
+        let processedParts;
+        try {
+            processedParts = await Promise.all(parts.map(async part => {
+                if (part.inlineData) {
+                    // Upload to storage for persistence
+                    await projectService.uploadImage(
+                        `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
+                        `task_${taskId}_${Date.now()}`
+                    );
+                    // Keep the inline data for display in chat
+                    return part;
+                }
                 return part;
-            }
-            return part;
-        }));
+            }));
+        } catch (uploadError) {
+            console.error('Failed to upload chat image:', uploadError);
+            alert(`Failed to upload image: ${uploadError instanceof Error ? uploadError.message : 'Unknown error'}. Your message was not sent.`);
+            return;
+        }
         
         const userMessage: ChatMessage = { role: 'user', parts: processedParts };
 
