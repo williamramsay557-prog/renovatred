@@ -17,6 +17,13 @@ Renovatr is a UK-focused DIY home renovation planning application. It helps user
   - Chat image uploads prevent message send if upload fails
   - User-friendly alerts guide users to create Supabase storage bucket
   - Created SUPABASE_STORAGE_SETUP.md guide for bucket setup
+- **Supabase Security Audit**: Analyzed database linter warnings
+  - 2 security warnings identified (function search path, password protection)
+  - Multiple performance warnings (RLS policy optimization opportunities)
+  - Created SUPABASE_WARNINGS_FIX.md with prioritized fixes
+  - Critical fix: Add search_path to handle_new_user function (2 min)
+  - Optional: Enable leaked password protection in Auth settings
+  - Post-launch: RLS performance optimization when at scale
 - **Required Setup**: Supabase Storage bucket "images" must be created
   - See SUPABASE_STORAGE_SETUP.md for 5-minute setup guide
   - Bucket must be public for photo display
