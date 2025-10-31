@@ -302,34 +302,45 @@ USING (auth.uid() = user_id);
 -- 10. STORAGE POLICIES (for 'images' bucket)
 -- ============================================================================
 
--- Users can upload images to their own folder
--- Run this in Supabase Storage settings or via SQL
+-- IMPORTANT: Image paths should be structured as: public/{user_id}/filename
+-- This allows proper ownership verification
+
+-- Users can upload images to their own folder only
 CREATE POLICY "Users can upload own images"
 ON storage.objects FOR INSERT
 WITH CHECK (
   bucket_id = 'images'
   AND auth.role() = 'authenticated'
+  AND (storage.foldername(name))[1] = 'public'
+  AND (storage.foldername(name))[2] = auth.uid()::text
 );
 
--- Users can view all public images
-CREATE POLICY "Anyone can view public images"
+-- Users can view all public images (read-only for all authenticated users)
+CREATE POLICY "Authenticated users can view all images"
 ON storage.objects FOR SELECT
-USING (bucket_id = 'images');
+USING (
+  bucket_id = 'images'
+  AND auth.role() = 'authenticated'
+);
 
--- Users can update their own images
+-- Users can update only their own images
 CREATE POLICY "Users can update own images"
 ON storage.objects FOR UPDATE
 USING (
   bucket_id = 'images'
   AND auth.role() = 'authenticated'
+  AND (storage.foldername(name))[1] = 'public'
+  AND (storage.foldername(name))[2] = auth.uid()::text
 );
 
--- Users can delete their own images
+-- Users can delete only their own images
 CREATE POLICY "Users can delete own images"
 ON storage.objects FOR DELETE
 USING (
   bucket_id = 'images'
   AND auth.role() = 'authenticated'
+  AND (storage.foldername(name))[1] = 'public'
+  AND (storage.foldername(name))[2] = auth.uid()::text
 );
 
 -- ============================================================================

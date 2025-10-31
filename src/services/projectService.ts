@@ -48,13 +48,31 @@ const dataURLtoFile = (dataurl: string, filename: string): File | null => {
  */
 export const uploadImage = async (dataUrl: string, fileNamePrefix: string): Promise<string> => {
     try {
+        if (USE_SERVER_API) {
+            // Use secure server-side upload
+            const publicUrl = await apiUploadImage(dataUrl, fileNamePrefix);
+            logger.info('Image uploaded via server API', { publicUrl });
+            return publicUrl;
+        }
+        
+        // Legacy client-side upload (UPDATED for RLS compatibility)
+        logger.warn('Using legacy client-side image upload');
+        
+        // Get current user ID for secure folder structure
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+            throw new Error('Not authenticated - cannot upload image');
+        }
+        
         const file = dataURLtoFile(dataUrl, `${fileNamePrefix}.png`);
         if (!file) {
             logger.error('Failed to convert data URL to file', undefined, { fileNamePrefix });
             throw new Error("Could not convert data URL to file");
         }
         
-        const filePath = `public/${fileNamePrefix}-${uuidv4()}`;
+        // Use user-scoped folder structure: public/{userId}/filename
+        // This matches the RLS policy requirements
+        const filePath = `public/${user.id}/${fileNamePrefix}-${uuidv4()}`;
         const { error: uploadError } = await supabase.storage
             .from('images')
             .upload(filePath, file);

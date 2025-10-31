@@ -707,6 +707,7 @@ app.post('/api/rooms/:roomId/photos', verifyAuth, validateRequest(z.object({ pho
  */
 app.post('/api/upload', verifyAuth, validateRequest(imageUploadSchema), async (req, res) => {
     try {
+        const userId = req.user.id;
         const { dataUrl, fileNamePrefix } = req.validated;
         
         // Validate image
@@ -716,9 +717,10 @@ app.post('/api/upload', verifyAuth, validateRequest(imageUploadSchema), async (r
         const buffer = Buffer.from(base64Data, 'base64');
         
         // Determine file extension
+        // Use user-based folder structure: public/{userId}/filename
         const ext = mimeType.split('/')[1];
         const fileName = `${fileNamePrefix}-${Date.now()}.${ext}`;
-        const filePath = `public/${fileName}`;
+        const filePath = `public/${userId}/${fileName}`;
         
         // Upload to Supabase Storage
         const { error: uploadError } = await supabaseServer.storage
