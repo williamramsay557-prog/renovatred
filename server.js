@@ -146,7 +146,10 @@ const verifyAuth = async (req, res, next) => {
         
         if (error || !user) {
             console.error('Auth verification failed:', error);
-            return res.status(401).json({ error: 'Unauthorized - Invalid or expired token' });
+            return res.status(401).json({ 
+                error: 'Unauthorized - Invalid or expired token',
+                details: error?.message 
+            });
         }
         
         // Attach user to request object
@@ -159,7 +162,10 @@ const verifyAuth = async (req, res, next) => {
         next();
     } catch (error) {
         console.error('Auth middleware error:', error);
-        return res.status(500).json({ error: 'Internal authentication error' });
+        return res.status(500).json({ 
+            error: 'Internal authentication error',
+            message: error instanceof Error ? error.message : String(error)
+        });
     }
 };
 
@@ -367,6 +373,18 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
         const userId = req.user.id;
         const { property } = req.validated;
         
+        // Ensure projectChatHistory is properly formatted
+        const projectChatHistory = Array.isArray(property.projectChatHistory) 
+            ? property.projectChatHistory 
+            : [];
+        
+        console.log('Creating project:', {
+            userId,
+            name: property.name,
+            roomsCount: property.rooms?.length || 0,
+            chatHistoryLength: projectChatHistory.length
+        });
+        
         // Create project
         const { data: projectData, error: projectError } = await supabaseServer
             .from('projects')
@@ -374,32 +392,55 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
                 user_id: userId,
                 name: property.name,
                 vision_statement: property.visionStatement || '',
-                project_chat_history: property.projectChatHistory || []
+                project_chat_history: projectChatHistory
             })
             .select()
             .single();
         
-        if (projectError) throw projectError;
+        if (projectError) {
+            console.error('Supabase error creating project:', projectError);
+            throw new Error(`Database error: ${projectError.message || projectError.code || 'Unknown database error'}`);
+        }
         
         // Create rooms if provided
         if (property.rooms && property.rooms.length > 0) {
             const roomsToInsert = property.rooms.map(room => ({
                 project_id: projectData.id,
                 name: room.name,
-                photos: room.photos || []
+                photos: Array.isArray(room.photos) ? room.photos : []
             }));
+            
+            console.log('Inserting rooms:', roomsToInsert);
             
             const { error: roomsError } = await supabaseServer
                 .from('rooms')
                 .insert(roomsToInsert);
             
-            if (roomsError) throw roomsError;
+            if (roomsError) {
+                console.error('Supabase error creating rooms:', roomsError);
+                throw new Error(`Database error creating rooms: ${roomsError.message || roomsError.code || 'Unknown database error'}`);
+            }
         }
         
         res.status(201).json({ projectId: projectData.id });
     } catch (error) {
         console.error('Error creating project:', error);
-        res.status(500).json({ error: 'Failed to create project' });
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorDetails = error instanceof Error ? error.stack : undefined;
+        
+        // Log full error details for debugging
+        console.error('Full error details:', {
+            message: errorMessage,
+            stack: errorDetails,
+            error: error
+        });
+        
+        // Return detailed error (safe for production - these are Supabase/database errors)
+        res.status(500).json({ 
+            error: 'Failed to create project',
+            message: errorMessage,
+            details: process.env.NODE_ENV === 'development' ? errorDetails : undefined
+        });
     }
 });
 
