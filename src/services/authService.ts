@@ -71,6 +71,7 @@ export const signUp = (email: string, password: string, fullName: string) => {
                 full_name: fullName,
                 // Supabase trigger will use this to create the profile
             },
+            emailRedirectTo: window.location.origin,
         },
     });
 };

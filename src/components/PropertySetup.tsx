@@ -26,12 +26,10 @@ export const PropertySetup: React.FC<PropertySetupProps> = ({ onPropertyCreate }
     e.preventDefault();
     if (propertyName && rooms.length > 0) {
       const property: Property = {
-        // A temporary ID is fine here, the backend will create the real one.
-        id: `prop-${Date.now()}`,
         name: propertyName,
-        rooms: rooms.map((name, index) => ({ id: `${Date.now()}-${index}`, name, photos: [] })),
+        rooms: rooms.map((name) => ({ name, photos: [] })),
         projectChatHistory: [],
-      };
+      } as Property;
       onPropertyCreate(property);
     }
   };
