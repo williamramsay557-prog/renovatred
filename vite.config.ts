@@ -16,7 +16,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false, // Disable source maps in production for security
   },
   resolve: {
     alias: {
