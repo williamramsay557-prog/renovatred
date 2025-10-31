@@ -499,7 +499,7 @@ const AppContent: React.FC = () => {
     return (
         <div className="h-screen w-screen bg-gray-100 flex flex-col">
             <GlobalNav activeView={mainView} setView={setMainView} user={currentUser} />
-            <main className="flex-1 overflow-hidden">
+            <main className="flex-1 overflow-y-auto">
                 {mainView === 'feed' && <FeedPage posts={feedPosts} allUsers={allUsers} currentUser={currentUser} activeProject={activeProject} onCreatePost={handleCreatePost} onLikePost={handleLikePost} onAddComment={handleAddComment} postPrompt={postPrompt} onStartProject={() => setAppView('setup')} />}
                 {mainView === 'profile' && <ProfilePage user={currentUser} projects={projects} allUsers={allUsers} onSetActiveProject={setActiveProjectId} onStartNewProject={() => setAppView('setup')} onDeleteProject={handleDeleteProject} onAddFriend={handleAddFriend} onRemoveFriend={handleRemoveFriend} onUpdateProfile={handleUpdateProfile} />}
                 {mainView === 'project' && (
