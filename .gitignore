@@ -1,20 +1,12 @@
-# Dependencies
-/node_modules
-
-# Build output
-/dist
-
-# Environment variables
+node_modules/
+.build/
+dist/
+.out/
+.next/
+.vercel/
 .env
 .env.*
-
-# IDE config
-.vscode/
-
-# Replit artifacts
-.local/
-*.bin
-
-# OS files
+.local
 .DS_Store
 Thumbs.db
+.supabase
