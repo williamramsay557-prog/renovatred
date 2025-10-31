@@ -209,15 +209,16 @@ const AppContent: React.FC = () => {
     const handleTaskSendMessage = async (taskId: string, parts: Part[]) => {
         if (!activeProject || !currentUser) return;
 
-        // Handle image uploads before creating message
+        // Upload images to storage but keep them as inline data for display
         const processedParts = await Promise.all(parts.map(async part => {
             if (part.inlineData) {
-                const imageUrl = await projectService.uploadImage(
+                // Upload to storage for persistence
+                await projectService.uploadImage(
                     `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
                     `task_${taskId}_${Date.now()}`
                 );
-                // Return a text part with the URL, as Gemini can handle image URLs
-                return { text: `Image uploaded: ${imageUrl}` };
+                // Keep the inline data for display in chat
+                return part;
             }
             return part;
         }));
@@ -295,13 +296,16 @@ const AppContent: React.FC = () => {
     const handleProjectSendMessage = async (parts: Part[]) => {
         if (!activeProject || !currentUser) return;
         
-         const processedParts = await Promise.all(parts.map(async part => {
+        // Upload images to storage but keep them as inline data for display
+        const processedParts = await Promise.all(parts.map(async part => {
             if (part.inlineData) {
-                const imageUrl = await projectService.uploadImage(
+                // Upload to storage for persistence
+                await projectService.uploadImage(
                     `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
                     `project_${activeProject.id}_${Date.now()}`
                 );
-                return { text: `Image uploaded: ${imageUrl}` };
+                // Keep the inline data for display in chat
+                return part;
             }
             return part;
         }));
