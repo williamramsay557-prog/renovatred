@@ -130,12 +130,16 @@ const AppContent: React.FC = () => {
             fetchDataForUser(session.user.id).catch((error) => {
                 console.error('Error in fetchDataForUser:', error);
                 setIsLoading(false);
+                // Reset app view if fetch fails
+                setAppView('setup');
             });
         } else {
+            // No session - clear everything and ensure we show Auth
             setCurrentUser(null);
             setProjects([]);
             setFeedPosts([]);
             setAllUsers([]);
+            setAppView('main'); // This will be overridden by the !session check in render
             setIsLoading(false);
         }
     }, [session, fetchDataForUser]);
@@ -174,16 +178,32 @@ const AppContent: React.FC = () => {
 
     // -- PROJECT HANDLERS --
     const handleProjectCreate = async (newPropertyData: Property) => {
-        if (!currentUser) return;
-        const initializedProperty: Property = {
-            ...newPropertyData,
-            projectChatHistory: [{ role: 'model', parts: [{ text: "Hi! I'm your project assistant. Let's dream a little! What kind of feeling are you hoping to create in this space?" }] }]
-        };
-        const newProject = await projectService.createProject(currentUser.id, initializedProperty);
-        setProjects(prev => [...prev, newProject]);
-        setActiveProjectId(newProject.id);
-        setAppView('main'); 
-        setMainView('project'); 
+        if (!currentUser) {
+            console.error('Cannot create project: user not authenticated');
+            alert('You must be logged in to create a project. Please refresh the page and sign in.');
+            return;
+        }
+        
+        if (!session?.user) {
+            console.error('Cannot create project: no session');
+            alert('Your session has expired. Please refresh the page and sign in again.');
+            return;
+        }
+        
+        try {
+            const initializedProperty: Property = {
+                ...newPropertyData,
+                projectChatHistory: [{ role: 'model', parts: [{ text: "Hi! I'm your project assistant. Let's dream a little! What kind of feeling are you hoping to create in this space?" }] }]
+            };
+            const newProject = await projectService.createProject(currentUser.id, initializedProperty);
+            setProjects(prev => [...prev, newProject]);
+            setActiveProjectId(newProject.id);
+            setAppView('main'); 
+            setMainView('project'); 
+        } catch (error) {
+            console.error('Failed to create project:', error);
+            alert(`Failed to create project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
     };
 
     const handleDeleteProject = async (projectId: string) => {
@@ -514,11 +534,21 @@ const AppContent: React.FC = () => {
         return <div className="min-h-screen bg-brand-primary flex items-center justify-center"><Icon name="spinner" className="w-12 h-12 text-white animate-spin" /></div>;
     }
     
-    if (!session) {
+    // Always check session first - if no session, show login
+    if (!session || !session.user) {
         return <Auth />;
     }
     
-    if (appView === 'setup') return <PropertySetup onPropertyCreate={handleProjectCreate} />;
+    // If we have a session but no currentUser, we're still loading user data
+    // Don't show setup page until we know if user exists
+    if (appView === 'setup') {
+        // Only show setup if we have a valid user
+        if (!currentUser) {
+            // Still loading or user profile doesn't exist - show loading
+            return <div className="min-h-screen bg-brand-primary flex items-center justify-center"><Icon name="spinner" className="w-12 h-12 text-white animate-spin" /></div>;
+        }
+        return <PropertySetup onPropertyCreate={handleProjectCreate} />;
+    }
 
     const renderProjectView = () => {
         if (!activeProject) {
