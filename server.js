@@ -14,29 +14,34 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // For serverless (Vercel), don't exit immediately - check on first request instead
 const isServerless = process.env.VERCEL === '1' || !process.env.NODE_ENV || process.env.NODE_ENV === 'production';
 
+// Initialize Supabase client lazily - don't block on initialization
 let supabaseServer;
 if (supabaseUrl && supabaseServiceKey) {
-    // Configure Supabase client for serverless
-    // Note: We use Promise.race with timeouts at the query level instead of fetch-level timeouts
-    // because Supabase's internal fetch handling can be complex
-    supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
-        auth: {
-            autoRefreshToken: false,
-            persistSession: false
-        },
-        // Connection timeout handled at query level with Promise.race
-        db: {
-            schema: 'public'
-        }
-    });
-    console.log('Supabase client initialized successfully');
+    try {
+        console.log('=== Initializing Supabase client ===');
+        // Configure Supabase client for serverless
+        supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false
+            },
+            db: {
+                schema: 'public'
+            }
+        });
+        console.log('=== Supabase client initialized successfully ===');
+    } catch (error) {
+        console.error('=== ERROR initializing Supabase client ===');
+        console.error(error);
+        // Don't throw - allow lazy initialization later
+    }
 } else {
     if (!isServerless) {
         // Only exit in development/non-serverless environments
         console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
         process.exit(1);
     } else {
-        console.warn('WARNING: Supabase credentials not available at startup (may be set in Vercel env vars)');
+        console.warn('WARNING: Supabase credentials not available at startup (will try lazy init on first request)');
     }
 }
 
