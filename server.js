@@ -327,8 +327,33 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
             });
         }
         
+        // First, test basic connectivity with a simple query
+        console.log('[GET /api/projects] Testing Supabase connectivity...');
+        const connectivityTestStart = Date.now();
+        try {
+            // Simple test query to verify connection works
+            const testQuery = supabaseServer
+                .from('projects')
+                .select('id')
+                .limit(1);
+            
+            const testTimeout = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Connectivity test timeout')), 3000)
+            );
+            
+            const testResult = await Promise.race([testQuery, testTimeout]);
+            console.log(`[GET /api/projects] Connectivity test passed in ${Date.now() - connectivityTestStart}ms`);
+            if (testResult.error) {
+                console.error('[GET /api/projects] Connectivity test returned error:', testResult.error);
+                console.error('[GET /api/projects] Error details:', JSON.stringify(testResult.error, null, 2));
+            }
+        } catch (err) {
+            console.error('[GET /api/projects] Connectivity test failed:', err);
+            throw new Error(`Cannot connect to Supabase: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        
         // OPTIMIZATION: Fetch projects first without nested data (faster)
-        console.log('[GET /api/projects] Starting projects query...');
+        console.log('[GET /api/projects] Starting projects query for user:', userId);
         const projectsQueryStart = Date.now();
         const projectsPromise = supabaseServer
             .from('projects')
@@ -345,14 +370,38 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
             const result = await Promise.race([projectsPromise, projectsTimeout]);
             projectsData = result.data;
             projectsError = result.error;
+            
+            // Log detailed error if present
+            if (projectsError) {
+                console.error('[GET /api/projects] Supabase error details:', {
+                    message: projectsError.message,
+                    details: projectsError.details,
+                    hint: projectsError.hint,
+                    code: projectsError.code
+                });
+            }
         } catch (err) {
             console.error('[GET /api/projects] Projects query timeout or error:', err);
+            console.error('[GET /api/projects] Error type:', err?.constructor?.name);
+            console.error('[GET /api/projects] Error stack:', err?.stack);
             throw err;
         }
         
         if (projectsError) {
             console.error('[GET /api/projects] Supabase projects query error:', projectsError);
-            throw new Error(`Database error: ${projectsError.message || projectsError.code || 'Unknown error'}`);
+            console.error('[GET /api/projects] Full error object:', JSON.stringify(projectsError, null, 2));
+            
+            // Provide more specific error messages
+            let errorMessage = `Database error: ${projectsError.message || projectsError.code || 'Unknown error'}`;
+            if (projectsError.code === 'PGRST116') {
+                errorMessage = 'No projects found (this is expected for new users)';
+            } else if (projectsError.code === 'PGRST301') {
+                errorMessage = 'Permission denied - check RLS policies or service role key';
+            } else if (projectsError.hint) {
+                errorMessage += `\nHint: ${projectsError.hint}`;
+            }
+            
+            throw new Error(errorMessage);
         }
         
         const projectsQueryTime = Date.now() - projectsQueryStart;
@@ -554,7 +603,7 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
             ? property.projectChatHistory 
             : [];
         
-        console.log('Creating project:', {
+        console.log('[POST /api/projects] Creating project:', {
             userId,
             name: property.name,
             roomsCount: property.rooms?.length || 0,
@@ -562,6 +611,7 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
         });
         
         // Create project with timeout protection
+        console.log('[POST /api/projects] Inserting project into database...');
         const projectInsertStart = Date.now();
         const projectPromise = supabaseServer
             .from('projects')
@@ -575,7 +625,7 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
             .single();
         
         const projectTimeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Project creation timeout')), 5000)
+            setTimeout(() => reject(new Error('Project creation timeout after 5s')), 5000)
         );
         
         let projectData, projectError;
@@ -583,14 +633,40 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
             const result = await Promise.race([projectPromise, projectTimeout]);
             projectData = result.data;
             projectError = result.error;
+            
+            // Log detailed error if present
+            if (projectError) {
+                console.error('[POST /api/projects] Supabase error details:', {
+                    message: projectError.message,
+                    details: projectError.details,
+                    hint: projectError.hint,
+                    code: projectError.code
+                });
+                console.error('[POST /api/projects] Full error object:', JSON.stringify(projectError, null, 2));
+            }
         } catch (err) {
-            console.error('Project creation timeout or error:', err);
+            console.error('[POST /api/projects] Project creation timeout or error:', err);
+            console.error('[POST /api/projects] Error type:', err?.constructor?.name);
+            console.error('[POST /api/projects] Error stack:', err?.stack);
             throw err;
         }
         
         if (projectError) {
-            console.error('Supabase error creating project:', projectError);
-            throw new Error(`Database error: ${projectError.message || projectError.code || 'Unknown database error'}`);
+            console.error('[POST /api/projects] Supabase error creating project:', projectError);
+            
+            // Provide more specific error messages
+            let errorMessage = `Database error: ${projectError.message || projectError.code || 'Unknown database error'}`;
+            if (projectError.code === '23505') {
+                errorMessage = 'Project name already exists (duplicate key violation)';
+            } else if (projectError.code === 'PGRST301') {
+                errorMessage = 'Permission denied - check RLS policies or service role key';
+            } else if (projectError.code === '23503') {
+                errorMessage = 'Foreign key violation - check user_id exists';
+            } else if (projectError.hint) {
+                errorMessage += `\nHint: ${projectError.hint}`;
+            }
+            
+            throw new Error(errorMessage);
         }
         
         const projectInsertTime = Date.now() - projectInsertStart;
