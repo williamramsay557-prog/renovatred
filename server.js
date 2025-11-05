@@ -16,16 +16,28 @@ const isServerless = process.env.VERCEL === '1' || !process.env.NODE_ENV || proc
 
 let supabaseServer;
 if (supabaseUrl && supabaseServiceKey) {
+    // Configure Supabase client for serverless
+    // Note: We use Promise.race with timeouts at the query level instead of fetch-level timeouts
+    // because Supabase's internal fetch handling can be complex
     supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
         auth: {
             autoRefreshToken: false,
             persistSession: false
+        },
+        // Connection timeout handled at query level with Promise.race
+        db: {
+            schema: 'public'
         }
     });
-} else if (!isServerless) {
-    // Only exit in development/non-serverless environments
-    console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
-    process.exit(1);
+    console.log('Supabase client initialized successfully');
+} else {
+    if (!isServerless) {
+        // Only exit in development/non-serverless environments
+        console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
+        process.exit(1);
+    } else {
+        console.warn('WARNING: Supabase credentials not available at startup (may be set in Vercel env vars)');
+    }
 }
 
 // Validate required environment variables
@@ -146,6 +158,7 @@ const verifyAuth = async (req, res, next) => {
                         persistSession: false
                     }
                 });
+                console.log('Supabase client initialized lazily in verifyAuth');
             } else {
                 return res.status(500).json({ 
                     error: 'Server configuration error',
@@ -162,8 +175,26 @@ const verifyAuth = async (req, res, next) => {
         
         const token = authHeader.substring(7); // Remove 'Bearer ' prefix
         
-        // Verify JWT using Supabase
-        const { data: { user }, error } = await supabaseServer.auth.getUser(token);
+        // Verify JWT using Supabase with timeout
+        const authStart = Date.now();
+        const authPromise = supabaseServer.auth.getUser(token);
+        const authTimeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Auth verification timeout')), 3000)
+        );
+        
+        let user, error;
+        try {
+            const result = await Promise.race([authPromise, authTimeout]);
+            user = result.data?.user;
+            error = result.error;
+            console.log(`Auth verification took ${Date.now() - authStart}ms`);
+        } catch (err) {
+            console.error('Auth timeout or error:', err);
+            return res.status(401).json({ 
+                error: 'Authentication failed',
+                message: err instanceof Error ? err.message : 'Auth verification timed out'
+            });
+        }
         
         if (error || !user) {
             console.error('Auth verification failed:', error);
@@ -282,10 +313,14 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
     const startTime = Date.now();
     try {
         const userId = req.user.id;
-        console.log('Fetching projects for user:', userId);
+        console.log('[GET /api/projects] Starting request for user:', userId);
+        console.log('[GET /api/projects] Supabase configured:', !!supabaseServer);
+        console.log('[GET /api/projects] Supabase URL:', supabaseUrl ? 'SET' : 'MISSING');
+        console.log('[GET /api/projects] Supabase Key:', supabaseServiceKey ? 'SET' : 'MISSING');
         
         // Check if Supabase is configured
         if (!supabaseServer) {
+            console.error('[GET /api/projects] Supabase not configured!');
             return res.status(500).json({ 
                 error: 'Server configuration error',
                 message: 'Supabase is not configured. Please set environment variables.'
@@ -293,70 +328,89 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
         }
         
         // OPTIMIZATION: Fetch projects first without nested data (faster)
+        console.log('[GET /api/projects] Starting projects query...');
         const projectsQueryStart = Date.now();
-        const { data: projectsData, error: projectsError } = await supabaseServer
+        const projectsPromise = supabaseServer
             .from('projects')
             .select('id, user_id, name, vision_statement, project_chat_history')
             .eq('user_id', userId)
             .limit(50); // Limit to prevent huge queries
         
+        const projectsTimeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Projects query timeout after 5s')), 5000)
+        );
+        
+        let projectsData, projectsError;
+        try {
+            const result = await Promise.race([projectsPromise, projectsTimeout]);
+            projectsData = result.data;
+            projectsError = result.error;
+        } catch (err) {
+            console.error('[GET /api/projects] Projects query timeout or error:', err);
+            throw err;
+        }
+        
         if (projectsError) {
-            console.error('Supabase projects query error:', projectsError);
+            console.error('[GET /api/projects] Supabase projects query error:', projectsError);
             throw new Error(`Database error: ${projectsError.message || projectsError.code || 'Unknown error'}`);
         }
         
         const projectsQueryTime = Date.now() - projectsQueryStart;
-        console.log(`Fetched ${projectsData?.length || 0} projects in ${projectsQueryTime}ms`);
+        console.log(`[GET /api/projects] Fetched ${projectsData?.length || 0} projects in ${projectsQueryTime}ms`);
         
         if (!projectsData || projectsData.length === 0) {
+            console.log('[GET /api/projects] No projects found, returning empty array');
             return res.json([]);
         }
         
         // OPTIMIZATION: Fetch rooms and tasks separately (parallel, faster than nested queries)
         const projectIds = projectsData.map(p => p.id);
+        console.log(`[GET /api/projects] Fetching rooms and tasks for ${projectIds.length} projects...`);
         const fetchStart = Date.now();
         
         // Fetch rooms and tasks in parallel with timeouts
+        const roomsQuery = supabaseServer
+            .from('rooms')
+            .select('id, project_id, name, photos, ai_summary')
+            .in('project_id', projectIds);
+        
+        const tasksQuery = supabaseServer
+            .from('tasks')
+            .select('id, project_id, title, room, status, priority, chat_history, guide, safety, materials, tools, cost, time, hiring_info, has_been_opened')
+            .in('project_id', projectIds);
+        
+        const roomsTimeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Rooms query timeout after 5s')), 5000)
+        );
+        
+        const tasksTimeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Tasks query timeout after 5s')), 5000)
+        );
+        
         const [roomsResult, tasksResult] = await Promise.allSettled([
-            // Rooms query with timeout
-            Promise.race([
-                supabaseServer
-                    .from('rooms')
-                    .select('id, project_id, name, photos, ai_summary')
-                    .in('project_id', projectIds),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Rooms query timeout')), 5000)
-                )
-            ]),
-            // Tasks query with timeout
-            Promise.race([
-                supabaseServer
-                    .from('tasks')
-                    .select('id, project_id, title, room, status, priority, chat_history, guide, safety, materials, tools, cost, time, hiring_info, has_been_opened')
-                    .in('project_id', projectIds),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Tasks query timeout')), 5000)
-                )
-            ])
+            Promise.race([roomsQuery, roomsTimeout]),
+            Promise.race([tasksQuery, tasksTimeout])
         ]);
         
         const fetchTime = Date.now() - fetchStart;
-        console.log(`Fetched rooms and tasks in ${fetchTime}ms`);
+        console.log(`[GET /api/projects] Fetched rooms and tasks in ${fetchTime}ms`);
         
         // Process rooms result
         let roomsData = [];
         if (roomsResult.status === 'fulfilled') {
             roomsData = roomsResult.value.data || [];
+            console.log(`[GET /api/projects] Fetched ${roomsData.length} rooms`);
         } else {
-            console.error('Failed to fetch rooms:', roomsResult.reason);
+            console.error('[GET /api/projects] Failed to fetch rooms:', roomsResult.reason);
         }
         
         // Process tasks result
         let tasksData = [];
         if (tasksResult.status === 'fulfilled') {
             tasksData = tasksResult.value.data || [];
+            console.log(`[GET /api/projects] Fetched ${tasksData.length} tasks`);
         } else {
-            console.error('Failed to fetch tasks:', tasksResult.reason);
+            console.error('[GET /api/projects] Failed to fetch tasks:', tasksResult.reason);
         }
         
         // Group rooms and tasks by project_id
@@ -483,8 +537,12 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
         const userId = req.user.id;
         const { property } = req.validated;
         
+        console.log('[POST /api/projects] Starting request for user:', userId);
+        console.log('[POST /api/projects] Supabase configured:', !!supabaseServer);
+        
         // Check if Supabase is configured
         if (!supabaseServer) {
+            console.error('[POST /api/projects] Supabase not configured!');
             return res.status(500).json({ 
                 error: 'Server configuration error',
                 message: 'Supabase is not configured. Please set environment variables.'
