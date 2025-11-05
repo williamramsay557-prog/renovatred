@@ -292,63 +292,105 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
             });
         }
         
-        // Query Supabase with timeout protection (8 seconds to leave buffer for Vercel's 10s limit)
-        const queryPromise = supabaseServer
+        // OPTIMIZATION: Fetch projects first without nested data (faster)
+        const projectsQueryStart = Date.now();
+        const { data: projectsData, error: projectsError } = await supabaseServer
             .from('projects')
-            .select(`
-                id,
-                user_id,
-                name,
-                vision_statement,
-                project_chat_history,
-                rooms(*),
-                tasks(*)
-            `)
-            .eq('user_id', userId);
+            .select('id, user_id, name, vision_statement, project_chat_history')
+            .eq('user_id', userId)
+            .limit(50); // Limit to prevent huge queries
         
-        // Timeout promise - rejects after 8 seconds
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Database query timeout - query took longer than 8 seconds')), 8000)
-        );
+        if (projectsError) {
+            console.error('Supabase projects query error:', projectsError);
+            throw new Error(`Database error: ${projectsError.message || projectsError.code || 'Unknown error'}`);
+        }
         
-        // Race the query against timeout
-        let projectsData, error;
-        try {
-            const result = await Promise.race([queryPromise, timeoutPromise]);
-            // If we get here, the query won (not the timeout)
-            projectsData = result.data;
-            error = result.error;
-        } catch (err) {
-            // Timeout or other error occurred
-            console.error('Query timeout or error:', err);
-            if (err instanceof Error && err.message.includes('timeout')) {
-                throw new Error('Database query timed out. Please try again or check your Supabase connection.');
+        const projectsQueryTime = Date.now() - projectsQueryStart;
+        console.log(`Fetched ${projectsData?.length || 0} projects in ${projectsQueryTime}ms`);
+        
+        if (!projectsData || projectsData.length === 0) {
+            return res.json([]);
+        }
+        
+        // OPTIMIZATION: Fetch rooms and tasks separately (parallel, faster than nested queries)
+        const projectIds = projectsData.map(p => p.id);
+        const fetchStart = Date.now();
+        
+        // Fetch rooms and tasks in parallel with timeouts
+        const [roomsResult, tasksResult] = await Promise.allSettled([
+            // Rooms query with timeout
+            Promise.race([
+                supabaseServer
+                    .from('rooms')
+                    .select('id, project_id, name, photos, ai_summary')
+                    .in('project_id', projectIds),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Rooms query timeout')), 5000)
+                )
+            ]),
+            // Tasks query with timeout
+            Promise.race([
+                supabaseServer
+                    .from('tasks')
+                    .select('id, project_id, title, room, status, priority, chat_history, guide, safety, materials, tools, cost, time, hiring_info, has_been_opened')
+                    .in('project_id', projectIds),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Tasks query timeout')), 5000)
+                )
+            ])
+        ]);
+        
+        const fetchTime = Date.now() - fetchStart;
+        console.log(`Fetched rooms and tasks in ${fetchTime}ms`);
+        
+        // Process rooms result
+        let roomsData = [];
+        if (roomsResult.status === 'fulfilled') {
+            roomsData = roomsResult.value.data || [];
+        } else {
+            console.error('Failed to fetch rooms:', roomsResult.reason);
+        }
+        
+        // Process tasks result
+        let tasksData = [];
+        if (tasksResult.status === 'fulfilled') {
+            tasksData = tasksResult.value.data || [];
+        } else {
+            console.error('Failed to fetch tasks:', tasksResult.reason);
+        }
+        
+        // Group rooms and tasks by project_id
+        const roomsByProject = new Map();
+        roomsData.forEach(room => {
+            if (!roomsByProject.has(room.project_id)) {
+                roomsByProject.set(room.project_id, []);
             }
-            throw err;
-        }
+            roomsByProject.get(room.project_id).push(room);
+        });
         
-        if (error) {
-            console.error('Supabase query error:', error);
-            throw error;
-        }
-        
-        console.log(`Fetched ${projectsData?.length || 0} projects in ${Date.now() - startTime}ms`);
+        const tasksByProject = new Map();
+        tasksData.forEach(task => {
+            if (!tasksByProject.has(task.project_id)) {
+                tasksByProject.set(task.project_id, []);
+            }
+            tasksByProject.get(task.project_id).push(task);
+        });
         
         // Transform to match frontend interface
-        const projects = (projectsData || []).map(p => ({
+        const projects = projectsData.map(p => ({
             id: p.id,
             userId: p.user_id,
             property: {
                 id: p.id,
                 name: p.name,
-                rooms: (p.rooms || []).map(r => ({
+                rooms: (roomsByProject.get(p.id) || []).map(r => ({
                     ...r,
                     aiSummary: r.ai_summary
                 })),
                 visionStatement: p.vision_statement,
                 projectChatHistory: p.project_chat_history || [],
             },
-            tasks: (p.tasks || []).map(t => ({
+            tasks: (tasksByProject.get(p.id) || []).map(t => ({
                 ...t,
                 chatHistory: t.chat_history || [],
                 hiringInfo: t.hiring_info,
@@ -356,6 +398,9 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
             })),
             feedPosts: []
         }));
+        
+        const totalTime = Date.now() - startTime;
+        console.log(`Total request time: ${totalTime}ms (projects: ${projectsQueryTime}ms, rooms+tasks: ${fetchTime}ms)`);
         
         res.json(projects);
     } catch (error) {
@@ -433,9 +478,18 @@ app.get('/api/projects/:id', verifyAuth, async (req, res) => {
  * Create a new project
  */
 app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: propertySchema })), async (req, res) => {
+    const startTime = Date.now();
     try {
         const userId = req.user.id;
         const { property } = req.validated;
+        
+        // Check if Supabase is configured
+        if (!supabaseServer) {
+            return res.status(500).json({ 
+                error: 'Server configuration error',
+                message: 'Supabase is not configured. Please set environment variables.'
+            });
+        }
         
         // Ensure projectChatHistory is properly formatted
         const projectChatHistory = Array.isArray(property.projectChatHistory) 
@@ -449,8 +503,9 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
             chatHistoryLength: projectChatHistory.length
         });
         
-        // Create project
-        const { data: projectData, error: projectError } = await supabaseServer
+        // Create project with timeout protection
+        const projectInsertStart = Date.now();
+        const projectPromise = supabaseServer
             .from('projects')
             .insert({
                 user_id: userId,
@@ -461,12 +516,29 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
             .select()
             .single();
         
+        const projectTimeout = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Project creation timeout')), 5000)
+        );
+        
+        let projectData, projectError;
+        try {
+            const result = await Promise.race([projectPromise, projectTimeout]);
+            projectData = result.data;
+            projectError = result.error;
+        } catch (err) {
+            console.error('Project creation timeout or error:', err);
+            throw err;
+        }
+        
         if (projectError) {
             console.error('Supabase error creating project:', projectError);
             throw new Error(`Database error: ${projectError.message || projectError.code || 'Unknown database error'}`);
         }
         
-        // Create rooms if provided
+        const projectInsertTime = Date.now() - projectInsertStart;
+        console.log(`Project created in ${projectInsertTime}ms`);
+        
+        // Create rooms if provided (with timeout protection)
         if (property.rooms && property.rooms.length > 0) {
             const roomsToInsert = property.rooms.map(room => ({
                 project_id: projectData.id,
@@ -474,21 +546,42 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
                 photos: Array.isArray(room.photos) ? room.photos : []
             }));
             
-            console.log('Inserting rooms:', roomsToInsert);
+            console.log('Inserting rooms:', roomsToInsert.length);
             
-            const { error: roomsError } = await supabaseServer
+            const roomsInsertStart = Date.now();
+            const roomsPromise = supabaseServer
                 .from('rooms')
                 .insert(roomsToInsert);
+            
+            const roomsTimeout = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Rooms creation timeout')), 5000)
+            );
+            
+            let roomsError;
+            try {
+                const result = await Promise.race([roomsPromise, roomsTimeout]);
+                roomsError = result.error;
+            } catch (err) {
+                console.error('Rooms creation timeout or error:', err);
+                throw err;
+            }
             
             if (roomsError) {
                 console.error('Supabase error creating rooms:', roomsError);
                 throw new Error(`Database error creating rooms: ${roomsError.message || roomsError.code || 'Unknown database error'}`);
             }
+            
+            const roomsInsertTime = Date.now() - roomsInsertStart;
+            console.log(`Rooms created in ${roomsInsertTime}ms`);
         }
+        
+        const totalTime = Date.now() - startTime;
+        console.log(`Project creation completed in ${totalTime}ms`);
         
         res.status(201).json({ projectId: projectData.id });
     } catch (error) {
-        console.error('Error creating project:', error);
+        const elapsed = Date.now() - startTime;
+        console.error(`Error creating project (took ${elapsed}ms):`, error);
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorDetails = error instanceof Error ? error.stack : undefined;
         
@@ -503,6 +596,7 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
         res.status(500).json({ 
             error: 'Failed to create project',
             message: errorMessage,
+            timeout: errorMessage.includes('timeout'),
             details: process.env.NODE_ENV === 'development' ? errorDetails : undefined
         });
     }
