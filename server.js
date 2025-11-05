@@ -39,7 +39,7 @@ if (!process.env.GEMINI_API_KEY && !isServerless) {
 // ============================================================================
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
 const MAX_REQUESTS = 20;
-const REQUEST_TIMEOUT = 30000; // 30 seconds
+// Note: REQUEST_TIMEOUT removed - Vercel handles timeouts at platform level (10s free, 30s pro)
 const MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB
 
 // Rate limiting
@@ -67,15 +67,9 @@ function rateLimitMiddleware(req, res, next) {
 // MIDDLEWARE
 // ============================================================================
 
-// Request timeout middleware - prevents hanging requests
-app.use((req, res, next) => {
-    req.setTimeout(REQUEST_TIMEOUT, () => {
-        if (!res.headersSent) {
-            res.status(504).json({ error: 'Request timeout' });
-        }
-    });
-    next();
-});
+// Note: Request timeout middleware removed for serverless compatibility
+// Vercel handles timeouts at the platform level (10s free, 30s pro)
+// We cannot use req.setTimeout() in serverless environments
 
 // CORS configuration
 const corsOptions = {
@@ -285,10 +279,21 @@ app.get('/health', (req, res) => {
  * Fetch all projects for the authenticated user
  */
 app.get('/api/projects', verifyAuth, async (req, res) => {
+    const startTime = Date.now();
     try {
         const userId = req.user.id;
+        console.log('Fetching projects for user:', userId);
         
-        const { data: projectsData, error } = await supabaseServer
+        // Check if Supabase is configured
+        if (!supabaseServer) {
+            return res.status(500).json({ 
+                error: 'Server configuration error',
+                message: 'Supabase is not configured. Please set environment variables.'
+            });
+        }
+        
+        // Query Supabase with timeout protection (8 seconds to leave buffer for Vercel's 10s limit)
+        const queryPromise = supabaseServer
             .from('projects')
             .select(`
                 id,
@@ -301,25 +306,51 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
             `)
             .eq('user_id', userId);
         
-        if (error) throw error;
+        // Timeout promise - rejects after 8 seconds
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Database query timeout - query took longer than 8 seconds')), 8000)
+        );
+        
+        // Race the query against timeout
+        let projectsData, error;
+        try {
+            const result = await Promise.race([queryPromise, timeoutPromise]);
+            // If we get here, the query won (not the timeout)
+            projectsData = result.data;
+            error = result.error;
+        } catch (err) {
+            // Timeout or other error occurred
+            console.error('Query timeout or error:', err);
+            if (err instanceof Error && err.message.includes('timeout')) {
+                throw new Error('Database query timed out. Please try again or check your Supabase connection.');
+            }
+            throw err;
+        }
+        
+        if (error) {
+            console.error('Supabase query error:', error);
+            throw error;
+        }
+        
+        console.log(`Fetched ${projectsData?.length || 0} projects in ${Date.now() - startTime}ms`);
         
         // Transform to match frontend interface
-        const projects = projectsData.map(p => ({
+        const projects = (projectsData || []).map(p => ({
             id: p.id,
             userId: p.user_id,
             property: {
                 id: p.id,
                 name: p.name,
-                rooms: p.rooms.map(r => ({
+                rooms: (p.rooms || []).map(r => ({
                     ...r,
                     aiSummary: r.ai_summary
                 })),
                 visionStatement: p.vision_statement,
-                projectChatHistory: p.project_chat_history,
+                projectChatHistory: p.project_chat_history || [],
             },
-            tasks: p.tasks.map(t => ({
+            tasks: (p.tasks || []).map(t => ({
                 ...t,
-                chatHistory: t.chat_history,
+                chatHistory: t.chat_history || [],
                 hiringInfo: t.hiring_info,
                 hasBeenOpened: t.has_been_opened
             })),
@@ -328,8 +359,14 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
         
         res.json(projects);
     } catch (error) {
-        console.error('Error fetching projects:', error);
-        res.status(500).json({ error: 'Failed to fetch projects' });
+        const elapsed = Date.now() - startTime;
+        console.error(`Error fetching projects (took ${elapsed}ms):`, error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        res.status(500).json({ 
+            error: 'Failed to fetch projects',
+            message: errorMessage,
+            timeout: errorMessage.includes('timeout')
+        });
     }
 });
 
