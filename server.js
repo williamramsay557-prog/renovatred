@@ -14,35 +14,40 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // For serverless (Vercel), don't exit immediately - check on first request instead
 const isServerless = process.env.VERCEL === '1' || !process.env.NODE_ENV || process.env.NODE_ENV === 'production';
 
-// Initialize Supabase client lazily - don't block on initialization
+// Initialize Supabase client lazily - don't create it until first use
+// This prevents blocking during module initialization
 let supabaseServer;
-if (supabaseUrl && supabaseServiceKey) {
-    try {
-        console.log('=== Initializing Supabase client ===');
-        // Configure Supabase client for serverless
-        supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
-            auth: {
-                autoRefreshToken: false,
-                persistSession: false
-            },
-            db: {
-                schema: 'public'
-            }
-        });
-        console.log('=== Supabase client initialized successfully ===');
-    } catch (error) {
-        console.error('=== ERROR initializing Supabase client ===');
-        console.error(error);
-        // Don't throw - allow lazy initialization later
+function getSupabaseClient() {
+    if (!supabaseServer) {
+        if (!supabaseUrl || !supabaseServiceKey) {
+            throw new Error('Supabase credentials not configured. Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+        }
+        console.log('=== Lazy initializing Supabase client ===');
+        try {
+            // Configure Supabase client for serverless
+            supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
+                auth: {
+                    autoRefreshToken: false,
+                    persistSession: false
+                },
+                db: {
+                    schema: 'public'
+                }
+            });
+            console.log('=== Supabase client initialized successfully ===');
+        } catch (error) {
+            console.error('=== ERROR initializing Supabase client ===');
+            console.error(error);
+            throw error;
+        }
     }
-} else {
-    if (!isServerless) {
-        // Only exit in development/non-serverless environments
-        console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
-        process.exit(1);
-    } else {
-        console.warn('WARNING: Supabase credentials not available at startup (will try lazy init on first request)');
-    }
+    return supabaseServer;
+}
+
+// Don't initialize at module load - wait for first use
+if (!isServerless && (!supabaseUrl || !supabaseServiceKey)) {
+    console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
+    process.exit(1);
 }
 
 // Validate required environment variables
@@ -158,31 +163,18 @@ const verifyAuth = async (req, res, next) => {
     console.log('verifyAuth method:', req.method);
     
     try {
-        // Check if Supabase is configured (lazy check for serverless)
-        console.log('verifyAuth: Checking Supabase client...');
-        if (!supabaseServer) {
-            console.log('verifyAuth: Supabase client not initialized, attempting lazy init...');
-            // Try to initialize if we have the env vars now
-            if (supabaseUrl && supabaseServiceKey) {
-                console.log('verifyAuth: Initializing Supabase client with env vars...');
-                supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
-                    auth: {
-                        autoRefreshToken: false,
-                        persistSession: false
-                    }
-                });
-                console.log('verifyAuth: Supabase client initialized lazily');
-            } else {
-                console.error('verifyAuth: Supabase credentials missing!');
-                console.error('verifyAuth: supabaseUrl:', !!supabaseUrl);
-                console.error('verifyAuth: supabaseServiceKey:', !!supabaseServiceKey);
-                return res.status(500).json({ 
-                    error: 'Server configuration error',
-                    message: 'Supabase credentials are not configured. Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables in Vercel.'
-                });
-            }
-        } else {
-            console.log('verifyAuth: Supabase client already initialized');
+        // Get Supabase client (lazy initialization)
+        console.log('verifyAuth: Getting Supabase client...');
+        let client;
+        try {
+            client = getSupabaseClient();
+            console.log('verifyAuth: Supabase client obtained');
+        } catch (error) {
+            console.error('verifyAuth: Failed to get Supabase client:', error);
+            return res.status(500).json({ 
+                error: 'Server configuration error',
+                message: 'Supabase credentials are not configured. Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables in Vercel.'
+            });
         }
         
         const authHeader = req.headers.authorization;
@@ -201,7 +193,7 @@ const verifyAuth = async (req, res, next) => {
         // Verify JWT using Supabase with timeout
         console.log('verifyAuth: Starting auth.getUser() call...');
         const authStart = Date.now();
-        const authPromise = supabaseServer.auth.getUser(token);
+        const authPromise = client.auth.getUser(token);
         const authTimeout = new Promise((_, reject) => 
             setTimeout(() => {
                 console.error('verifyAuth: Auth verification TIMED OUT after 3s');
@@ -384,9 +376,12 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
             hasSupabaseKey: !!supabaseServiceKey
         });
         
-        // Check if Supabase is configured
-        if (!supabaseServer) {
-            console.error('[GET /api/projects] Supabase not configured!');
+        // Get Supabase client (lazy initialization)
+        let supabaseClient;
+        try {
+            supabaseClient = getSupabaseClient();
+        } catch (error) {
+            console.error('[GET /api/projects] Failed to get Supabase client:', error);
             return res.status(500).json({ 
                 error: 'Server configuration error',
                 message: 'Supabase is not configured. Please set environment variables.'
@@ -398,7 +393,7 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
         const connectivityTestStart = Date.now();
         try {
             // Simple test query to verify connection works
-            const testQuery = supabaseServer
+            const testQuery = supabaseClient
                 .from('projects')
                 .select('id')
                 .limit(1);
@@ -421,7 +416,7 @@ app.get('/api/projects', verifyAuth, async (req, res) => {
         // OPTIMIZATION: Fetch projects first without nested data (faster)
         console.log('[GET /api/projects] Starting projects query for user:', userId);
         const projectsQueryStart = Date.now();
-        const projectsPromise = supabaseServer
+        const projectsPromise = supabaseClient
             .from('projects')
             .select('id, user_id, name, vision_statement, project_chat_history')
             .eq('user_id', userId)
@@ -665,9 +660,12 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
             hasSupabaseKey: !!supabaseServiceKey
         });
         
-        // Check if Supabase is configured
-        if (!supabaseServer) {
-            console.error('[POST /api/projects] Supabase not configured!');
+        // Get Supabase client (lazy initialization)
+        let supabaseClient;
+        try {
+            supabaseClient = getSupabaseClient();
+        } catch (error) {
+            console.error('[POST /api/projects] Failed to get Supabase client:', error);
             return res.status(500).json({ 
                 error: 'Server configuration error',
                 message: 'Supabase is not configured. Please set environment variables.'
@@ -689,7 +687,7 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
         // Create project with timeout protection
         console.log('[POST /api/projects] Inserting project into database...');
         const projectInsertStart = Date.now();
-        const projectPromise = supabaseServer
+        const projectPromise = supabaseClient
             .from('projects')
             .insert({
                 user_id: userId,
@@ -759,7 +757,7 @@ app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: prope
             console.log('Inserting rooms:', roomsToInsert.length);
             
             const roomsInsertStart = Date.now();
-            const roomsPromise = supabaseServer
+            const roomsPromise = supabaseClient
                 .from('rooms')
                 .insert(roomsToInsert);
             
