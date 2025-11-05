@@ -147,49 +147,79 @@ if (process.env.GEMINI_API_KEY) {
  * Verifies Supabase access tokens and attaches user to request
  */
 const verifyAuth = async (req, res, next) => {
+    const authStartTime = Date.now();
+    console.log('=== verifyAuth START ===');
+    console.log('verifyAuth timestamp:', new Date().toISOString());
+    console.log('verifyAuth path:', req.path);
+    console.log('verifyAuth method:', req.method);
+    
     try {
         // Check if Supabase is configured (lazy check for serverless)
+        console.log('verifyAuth: Checking Supabase client...');
         if (!supabaseServer) {
+            console.log('verifyAuth: Supabase client not initialized, attempting lazy init...');
             // Try to initialize if we have the env vars now
             if (supabaseUrl && supabaseServiceKey) {
+                console.log('verifyAuth: Initializing Supabase client with env vars...');
                 supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
                     auth: {
                         autoRefreshToken: false,
                         persistSession: false
                     }
                 });
-                console.log('Supabase client initialized lazily in verifyAuth');
+                console.log('verifyAuth: Supabase client initialized lazily');
             } else {
+                console.error('verifyAuth: Supabase credentials missing!');
+                console.error('verifyAuth: supabaseUrl:', !!supabaseUrl);
+                console.error('verifyAuth: supabaseServiceKey:', !!supabaseServiceKey);
                 return res.status(500).json({ 
                     error: 'Server configuration error',
                     message: 'Supabase credentials are not configured. Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables in Vercel.'
                 });
             }
+        } else {
+            console.log('verifyAuth: Supabase client already initialized');
         }
         
         const authHeader = req.headers.authorization;
+        console.log('verifyAuth: Auth header present:', !!authHeader);
+        console.log('verifyAuth: Auth header starts with Bearer:', authHeader?.startsWith('Bearer '));
         
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            console.error('verifyAuth: No valid authorization header');
             return res.status(401).json({ error: 'Unauthorized - No valid authorization header' });
         }
         
         const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+        console.log('verifyAuth: Token extracted, length:', token.length);
+        console.log('verifyAuth: Token preview:', token.substring(0, 20) + '...');
         
         // Verify JWT using Supabase with timeout
+        console.log('verifyAuth: Starting auth.getUser() call...');
         const authStart = Date.now();
         const authPromise = supabaseServer.auth.getUser(token);
         const authTimeout = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Auth verification timeout')), 3000)
+            setTimeout(() => {
+                console.error('verifyAuth: Auth verification TIMED OUT after 3s');
+                reject(new Error('Auth verification timeout after 3 seconds'));
+            }, 3000)
         );
         
         let user, error;
         try {
+            console.log('verifyAuth: Racing auth promise against timeout...');
             const result = await Promise.race([authPromise, authTimeout]);
+            const authTime = Date.now() - authStart;
             user = result.data?.user;
             error = result.error;
-            console.log(`Auth verification took ${Date.now() - authStart}ms`);
+            console.log(`verifyAuth: Auth verification completed in ${authTime}ms`);
+            console.log('verifyAuth: User found:', !!user);
+            console.log('verifyAuth: Auth error:', error?.message || 'none');
         } catch (err) {
-            console.error('Auth timeout or error:', err);
+            const authTime = Date.now() - authStart;
+            console.error(`verifyAuth: Auth timeout or error after ${authTime}ms:`, err);
+            console.error('verifyAuth: Error type:', err?.constructor?.name);
+            console.error('verifyAuth: Error message:', err?.message);
             return res.status(401).json({ 
                 error: 'Authentication failed',
                 message: err instanceof Error ? err.message : 'Auth verification timed out'
@@ -294,9 +324,31 @@ const validateRequest = (schema) => {
     };
 };
 
-// Health check endpoint
+// Health check endpoint - no auth required
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    console.log('=== /health endpoint called ===');
+    console.log('Health check timestamp:', new Date().toISOString());
+    res.json({ 
+        status: 'ok', 
+        timestamp: new Date().toISOString(),
+        environment: {
+            VERCEL: process.env.VERCEL,
+            NODE_ENV: process.env.NODE_ENV,
+            hasSupabaseUrl: !!supabaseUrl,
+            hasSupabaseKey: !!supabaseServiceKey,
+            supabaseClientInitialized: !!supabaseServer
+        }
+    });
+});
+
+// Test endpoint - no auth, just to verify serverless function works
+app.get('/api/test', (req, res) => {
+    console.log('=== /api/test endpoint called ===');
+    console.log('Test endpoint timestamp:', new Date().toISOString());
+    res.json({ 
+        message: 'Serverless function is working',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // ============================================================================
@@ -311,12 +363,22 @@ app.get('/health', (req, res) => {
  */
 app.get('/api/projects', verifyAuth, async (req, res) => {
     const startTime = Date.now();
+    // Log immediately to verify function is called
+    console.log('=== GET /api/projects START ===');
+    console.log('Timestamp:', new Date().toISOString());
+    
     try {
         const userId = req.user.id;
         console.log('[GET /api/projects] Starting request for user:', userId);
         console.log('[GET /api/projects] Supabase configured:', !!supabaseServer);
-        console.log('[GET /api/projects] Supabase URL:', supabaseUrl ? 'SET' : 'MISSING');
-        console.log('[GET /api/projects] Supabase Key:', supabaseServiceKey ? 'SET' : 'MISSING');
+        console.log('[GET /api/projects] Supabase URL:', supabaseUrl ? `SET (${supabaseUrl.substring(0, 20)}...)` : 'MISSING');
+        console.log('[GET /api/projects] Supabase Key:', supabaseServiceKey ? `SET (${supabaseServiceKey.substring(0, 10)}...)` : 'MISSING');
+        console.log('[GET /api/projects] Environment check:', {
+            VERCEL: process.env.VERCEL,
+            NODE_ENV: process.env.NODE_ENV,
+            hasSupabaseUrl: !!supabaseUrl,
+            hasSupabaseKey: !!supabaseServiceKey
+        });
         
         // Check if Supabase is configured
         if (!supabaseServer) {
@@ -582,12 +644,22 @@ app.get('/api/projects/:id', verifyAuth, async (req, res) => {
  */
 app.post('/api/projects', verifyAuth, validateRequest(z.object({ property: propertySchema })), async (req, res) => {
     const startTime = Date.now();
+    // Log immediately to verify function is called
+    console.log('=== POST /api/projects START ===');
+    console.log('Timestamp:', new Date().toISOString());
+    
     try {
         const userId = req.user.id;
         const { property } = req.validated;
         
         console.log('[POST /api/projects] Starting request for user:', userId);
         console.log('[POST /api/projects] Supabase configured:', !!supabaseServer);
+        console.log('[POST /api/projects] Environment check:', {
+            VERCEL: process.env.VERCEL,
+            NODE_ENV: process.env.NODE_ENV,
+            hasSupabaseUrl: !!supabaseUrl,
+            hasSupabaseKey: !!supabaseServiceKey
+        });
         
         // Check if Supabase is configured
         if (!supabaseServer) {
