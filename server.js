@@ -88,11 +88,10 @@ function rateLimitMiddleware(req, res, next) {
 // Vercel handles timeouts at the platform level (10s free, 30s pro)
 // We cannot use req.setTimeout() in serverless environments
 
-// CORS configuration
+// CORS configuration - simplified for serverless
+// In serverless, we need to allow all origins or configure properly
 const corsOptions = {
-    origin: process.env.NODE_ENV === 'production' 
-        ? process.env.ALLOWED_ORIGINS?.split(',') || [] 
-        : ['http://localhost:5000', 'http://0.0.0.0:5000'],
+    origin: true, // Allow all origins in serverless (you can restrict later)
     credentials: true,
     optionsSuccessStatus: 200
 };
