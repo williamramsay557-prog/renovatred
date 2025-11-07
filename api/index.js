@@ -61,12 +61,18 @@ export default async function(req, res) {
     console.log('Request method:', req.method);
     console.log('Request URL:', req.url);
     console.log('Request path:', req.path);
+    console.log('Request headers:', Object.keys(req.headers || {}));
     
     try {
         console.log('Step 1: Getting handler...');
         const handlerInstance = await getHandler();
         console.log('Step 2: Handler obtained, calling it...');
-        return handlerInstance(req, res);
+        console.log('Step 3: Handler type:', typeof handlerInstance);
+        
+        // serverless-http returns a promise - await it
+        const result = await handlerInstance(req, res);
+        console.log('Step 4: Handler completed, result:', result);
+        return result;
     } catch (error) {
         console.error('=== FATAL ERROR in request handler ===');
         console.error('Error type:', error?.constructor?.name);

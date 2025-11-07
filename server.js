@@ -132,11 +132,31 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Body parser with size limit
-app.use(express.json({ limit: `${MAX_PAYLOAD_SIZE / 1024 / 1024}mb` }));
+// Body parser with size limit - only parse JSON for POST/PUT/PATCH
+app.use((req, res, next) => {
+    if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+        express.json({ limit: `${MAX_PAYLOAD_SIZE / 1024 / 1024}mb` })(req, res, next);
+    } else {
+        next();
+    }
+});
 
 // Rate limiting
 app.use(rateLimitMiddleware);
+
+// Logging middleware for debugging (serverless only)
+if (process.env.VERCEL === '1') {
+    app.use((req, res, next) => {
+        console.log('[Express] Request received:', {
+            method: req.method,
+            path: req.path,
+            url: req.url,
+            originalUrl: req.originalUrl,
+            query: req.query
+        });
+        next();
+    });
+}
 
 // SECURITY: Image validation function
 const validateImageUpload = (imageData) => {
