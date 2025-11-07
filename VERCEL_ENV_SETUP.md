@@ -17,19 +17,39 @@ Node.js process exited with exit status: 1
 
 ### Step 2: Add These Variables
 
-Add **all** of these environment variables:
+Add **all** of these environment variables (click "Add New" for each):
 
-```
-GEMINI_API_KEY=your-gemini-api-key-here
-VITE_SUPABASE_URL=https://your-project-id.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key-here
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
-```
+**Variable 1: VITE_SUPABASE_URL**
+- Key: `VITE_SUPABASE_URL`
+- Value: `https://your-project-id.supabase.co` (from Supabase Dashboard → Settings → API → Project URL)
+- Environments: ☑ Production, ☑ Preview, ☑ Development
+
+**Variable 2: SUPABASE_URL** (Backup - in case VITE_ prefix doesn't work)
+- Key: `SUPABASE_URL`
+- Value: Same as VITE_SUPABASE_URL
+- Environments: ☑ Production, ☑ Preview, ☑ Development
+
+**Variable 3: VITE_SUPABASE_ANON_KEY**
+- Key: `VITE_SUPABASE_ANON_KEY`
+- Value: Your `anon` `public` key (from Supabase Dashboard → Settings → API)
+- Environments: ☑ Production, ☑ Preview, ☑ Development
+
+**Variable 4: SUPABASE_SERVICE_ROLE_KEY** ⚠️ CRITICAL
+- Key: `SUPABASE_SERVICE_ROLE_KEY`
+- Value: Your `service_role` `secret` key (from Supabase Dashboard → Settings → API)
+- ⚠️ This is DIFFERENT from the anon key! It's the secret one.
+- Environments: ☑ Production, ☑ Preview, ☑ Development
+
+**Variable 5: GEMINI_API_KEY**
+- Key: `GEMINI_API_KEY`
+- Value: Your Google Gemini API key (from https://aistudio.google.com/app/apikey)
+- Environments: ☑ Production, ☑ Preview, ☑ Development
 
 **Important Notes:**
 - ✅ Set them for **Production**, **Preview**, and **Development** environments
 - ✅ Make sure there are **no spaces** around the `=` sign
 - ✅ **Copy the exact values** from your Supabase dashboard
+- ✅ The service_role key is SECRET - never expose it in client code
 
 ### Step 3: Redeploy
 
