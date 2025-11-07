@@ -351,7 +351,9 @@ const AppContent: React.FC = () => {
                 await handleGenerateTaskDetails(taskForPlan);
 
             } else if (responseText.includes('[UPDATE_PLAN]')) {
-                const commandRegex = /\[UPDATE_PLAN\]\s*({[\s\S]*?})/;
+                // Extract JSON object from UPDATE_PLAN command
+                // Pattern: [UPDATE_PLAN] { ... } - matches JSON object after command
+                const commandRegex = /\[UPDATE_PLAN\]\s*(\{[\s\S]*?\})/;
                 const match = responseText.match(commandRegex);
                 if (match && match[1]) {
                     try {
@@ -359,8 +361,12 @@ const AppContent: React.FC = () => {
                         const projectForUpdate = await projectService.getProjectById(activeProject.id);
                         const taskToUpdate = projectForUpdate!.tasks.find(t=>t.id === taskId)!;
                         await handleUpdateTask({ ...taskToUpdate, ...planUpdate });
-                    } catch (e) { console.error("Failed to parse plan update JSON", e); }
+                    } catch (e) { 
+                        console.error("Failed to parse plan update JSON", e);
+                        console.error("Update command text:", match[1]);
+                    }
                 }
+                // Remove command from display text
                 responseText = responseText.replace(commandRegex, '').trim();
                 modelResponse.parts = [{text: responseText}];
                 await projectService.addMessageToTaskChat(activeProject.id, taskId, modelResponse);

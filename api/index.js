@@ -39,16 +39,14 @@ async function getHandler() {
             
             // Create handler
             // Configure serverless-http to handle Vercel's path rewriting
+            // requestPath option tells it to use req.url instead of req.path
             console.log('Step 6: Creating serverless handler...');
             handler = serverless(app, {
                 binary: ['image/*', 'application/pdf'],
                 requestPath: (req) => {
-                    // Use req.url which should contain the full path
-                    // Log to verify this function is being called
+                    // Use req.url which contains the full path from Vercel
                     const path = req.url || req.path || '/';
-                    console.log('[serverless-http requestPath] Called with req.url:', req.url);
-                    console.log('[serverless-http requestPath] Called with req.path:', req.path);
-                    console.log('[serverless-http requestPath] Returning path:', path);
+                    console.log('[serverless-http] Using path:', path);
                     return path;
                 }
             });
@@ -69,70 +67,38 @@ async function getHandler() {
 export default async function(req, res) {
     console.log('=== Request received ===');
     console.log('Request method:', req.method);
-    console.log('Original req.url:', req.url);
-    console.log('Original req.path:', req.path);
+    console.log('Request URL:', req.url);
+    console.log('Request path:', req.path);
     console.log('x-vercel-function-path header:', req.headers['x-vercel-function-path']);
     
-    // Vercel rewrites /api/* to /api, but the original path is in the request
-    // We need to get the original path from the request URL or headers
-    // The original request URL should be in req.url or we can reconstruct it
-    
-    // Get the original path - Vercel should preserve it in req.url
-    // If not, try to get it from headers or reconstruct
+    // Vercel's rewrite strips the path, but req.url should still have it
+    // If req.url has /api/*, use it directly. Otherwise reconstruct from headers
     let expressPath = req.url;
     
-    // Check if we have the full path already
-    if (expressPath && expressPath.startsWith('/api')) {
-        // We have the full path, use it
-        console.log('Using req.url as Express path:', expressPath);
-    } else {
-        // Need to reconstruct - Vercel rewrote /api/test-express to /api
-        // The original path might be in the query string or headers
-        // Try to get from x-vercel-function-path or reconstruct from referer
-        const originalUrl = req.headers['x-vercel-original-url'] || 
-                           req.headers['referer'] || 
-                           req.url;
-        
-        // Extract path from URL if it's a full URL
-        if (originalUrl && originalUrl.includes('/api/')) {
-            const urlObj = new URL(originalUrl, 'https://example.com');
-            expressPath = urlObj.pathname;
-            console.log('Reconstructed path from URL:', expressPath);
+    // Check if we need to reconstruct the path
+    if (!expressPath || expressPath === '/' || !expressPath.startsWith('/api')) {
+        // Try to get original path from Vercel header
+        const vercelPath = req.headers['x-vercel-function-path'];
+        if (vercelPath) {
+            expressPath = vercelPath.startsWith('/api') ? vercelPath : `/api${vercelPath}`;
         } else if (req.url && req.url !== '/') {
             // Use req.url and ensure it has /api prefix
             expressPath = req.url.startsWith('/api') ? req.url : `/api${req.url}`;
-            console.log('Using req.url with /api prefix:', expressPath);
         } else {
-            // Last resort: use the path from the original request
-            // This should be in the query or we need to parse it differently
-            console.warn('Could not determine path from req.url:', req.url);
-            console.warn('Headers:', Object.keys(req.headers));
-            expressPath = req.url || '/api';
+            // Fallback: try to extract from referer or reconstruct
+            expressPath = '/api/projects'; // Default fallback
         }
     }
     
     console.log('Final Express path:', expressPath);
     
-    // CRITICAL: Modify the request object BEFORE serverless-http processes it
-    // serverless-http reads these properties when creating the Express request
-    Object.defineProperty(req, 'url', {
-        value: expressPath,
-        writable: true,
-        configurable: true
-    });
-    Object.defineProperty(req, 'path', {
-        value: expressPath,
-        writable: true,
-        configurable: true
-    });
-    Object.defineProperty(req, 'originalUrl', {
-        value: expressPath,
-        writable: true,
-        configurable: true
-    });
-    
-    console.log('Modified req.url:', req.url);
-    console.log('Modified req.path:', req.path);
+    // Modify request to have correct path for Express
+    // serverless-http will use these properties
+    if (req.url !== expressPath) {
+        req.url = expressPath;
+        req.path = expressPath;
+        req.originalUrl = expressPath;
+    }
     
     try {
         console.log('Step 1: Getting handler...');
