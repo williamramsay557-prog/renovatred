@@ -140,10 +140,39 @@ export default async function(req, res) {
         console.log('Step 2: Handler obtained, calling it...');
         console.log('Step 3: Handler type:', typeof handlerInstance);
         
-        // serverless-http returns a promise - await it
+        // serverless-http returns a Lambda-style response object
+        // Convert it to Vercel's response format
         const result = await handlerInstance(req, res);
-        console.log('Step 4: Handler completed, result:', result);
-        return result;
+        console.log('Step 4: Handler completed, result statusCode:', result?.statusCode);
+        
+        // If we got a Lambda-style response, convert it
+        if (result && result.statusCode && !res.headersSent) {
+            // Set status
+            res.statusCode = result.statusCode;
+            
+            // Set headers (skip content-length as it will be set automatically)
+            if (result.headers) {
+                Object.keys(result.headers).forEach(key => {
+                    if (key.toLowerCase() !== 'content-length') {
+                        res.setHeader(key, result.headers[key]);
+                    }
+                });
+            }
+            
+            // Send body
+            if (result.body) {
+                if (typeof result.body === 'string') {
+                    res.send(result.body);
+                } else {
+                    res.json(result.body);
+                }
+            } else {
+                res.end();
+            }
+        }
+        
+        // Response is sent, function can complete
+        return;
     } catch (error) {
         console.error('=== FATAL ERROR in request handler ===');
         console.error('Error type:', error?.constructor?.name);
