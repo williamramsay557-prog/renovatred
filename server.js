@@ -8,7 +8,9 @@ const app = express();
 const PORT = 3000;
 
 // Initialize server-side Supabase client with service role key
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
+// NOTE: In Vercel serverless, VITE_ prefixed vars might not be available
+// Try both VITE_SUPABASE_URL and SUPABASE_URL for compatibility
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // For serverless (Vercel), don't exit immediately - check on first request instead
@@ -20,14 +22,26 @@ let supabaseServer;
 function getSupabaseClient() {
     if (!supabaseServer) {
         if (!supabaseUrl || !supabaseServiceKey) {
-            throw new Error('Supabase credentials not configured. Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+            console.error('=== MISSING SUPABASE CREDENTIALS ===');
+            console.error('supabaseUrl:', supabaseUrl ? 'SET' : 'MISSING');
+            console.error('supabaseServiceKey:', supabaseServiceKey ? 'SET' : 'MISSING');
+            console.error('Environment check:', {
+                VITE_SUPABASE_URL: !!process.env.VITE_SUPABASE_URL,
+                SUPABASE_URL: !!process.env.SUPABASE_URL,
+                SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+                allSupabaseVars: Object.keys(process.env).filter(k => k.includes('SUPABASE'))
+            });
+            throw new Error('Supabase credentials not configured. Please set VITE_SUPABASE_URL (or SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY environment variables in Vercel.');
         }
         console.log('=== Lazy initializing Supabase client ===');
         console.log('Supabase URL:', supabaseUrl ? `${supabaseUrl.substring(0, 30)}...` : 'MISSING');
         console.log('Service Key present:', !!supabaseServiceKey);
+        console.log('Service Key length:', supabaseServiceKey?.length || 0);
+        console.log('Service Key preview:', supabaseServiceKey ? `${supabaseServiceKey.substring(0, 20)}...` : 'N/A');
         
         try {
-            // Configure Supabase client for serverless with connection pooling
+            // Configure Supabase client for serverless
+            // Note: Using minimal config - let Supabase handle timeouts internally
             supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
                 auth: {
                     autoRefreshToken: false,
@@ -35,21 +49,12 @@ function getSupabaseClient() {
                 },
                 db: {
                     schema: 'public'
-                },
-                global: {
-                    // Add fetch timeout for serverless
-                    fetch: (url, options = {}) => {
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
-                        
-                        return fetch(url, {
-                            ...options,
-                            signal: controller.signal
-                        }).finally(() => clearTimeout(timeoutId));
-                    }
                 }
+                // Removed custom fetch wrapper - it may be causing issues
+                // Supabase client has its own timeout handling
             });
             console.log('=== Supabase client initialized successfully ===');
+            console.log('Supabase URL verified:', supabaseUrl.includes('supabase.co') || supabaseUrl.includes('supabase.com'));
         } catch (error) {
             console.error('=== ERROR initializing Supabase client ===');
             console.error('Error type:', error?.constructor?.name);
@@ -373,45 +378,66 @@ app.get('/api/test', (req, res) => {
     });
 });
 
-// Direct Supabase connection test - no auth, minimal query
+// Direct Supabase connection test - no auth, minimal query with step-by-step logging
 app.get('/api/test-supabase', async (req, res) => {
     console.log('=== /api/test-supabase endpoint called ===');
     const startTime = Date.now();
     
     try {
-        console.log('Getting Supabase client...');
+        console.log('[TEST] Step 1: Getting Supabase client...');
         const client = getSupabaseClient();
-        console.log('Supabase client obtained, executing query...');
+        console.log('[TEST] Step 2: Supabase client obtained successfully');
         
-        const queryStart = Date.now();
-        const { data, error } = await client
+        console.log('[TEST] Step 3: Creating query promise...');
+        const queryPromise = client
             .from('projects')
             .select('id')
             .limit(1);
         
+        console.log('[TEST] Step 4: Setting up 5-second timeout...');
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => {
+                console.error('[TEST] Step 5: QUERY TIMED OUT after 5 seconds!');
+                reject(new Error('Query timeout after 5 seconds - Supabase may be unreachable'));
+            }, 5000)
+        );
+        
+        console.log('[TEST] Step 5: Racing query against timeout...');
+        const queryStart = Date.now();
+        const result = await Promise.race([queryPromise, timeoutPromise]);
         const queryTime = Date.now() - queryStart;
         const totalTime = Date.now() - startTime;
         
-        console.log(`Query completed in ${queryTime}ms, total time: ${totalTime}ms`);
+        console.log(`[TEST] Step 6: Query completed in ${queryTime}ms, total time: ${totalTime}ms`);
+        console.log('[TEST] Result:', { 
+            hasData: !!result.data, 
+            dataLength: result.data?.length || 0,
+            hasError: !!result.error,
+            errorCode: result.error?.code
+        });
         
         res.status(200).json({ 
             success: true,
             queryTime: `${queryTime}ms`,
             totalTime: `${totalTime}ms`,
-            data: data?.length || 0,
-            error: error ? {
-                message: error.message,
-                code: error.code,
-                details: error.details
+            dataCount: result.data?.length || 0,
+            error: result.error ? {
+                message: result.error.message,
+                code: result.error.code,
+                details: result.error.details
             } : null
         });
     } catch (err) {
         const totalTime = Date.now() - startTime;
-        console.error(`Supabase test failed after ${totalTime}ms:`, err);
+        console.error(`[TEST] ERROR: Supabase test failed after ${totalTime}ms`);
+        console.error('[TEST] Error type:', err?.constructor?.name);
+        console.error('[TEST] Error message:', err?.message);
+        console.error('[TEST] Error stack:', err?.stack?.substring(0, 500));
         res.status(500).json({ 
             success: false,
             error: err instanceof Error ? err.message : String(err),
-            totalTime: `${totalTime}ms`
+            totalTime: `${totalTime}ms`,
+            timeout: err instanceof Error && err.message.includes('timeout')
         });
     }
 });

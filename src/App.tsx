@@ -92,7 +92,23 @@ const AppContent: React.FC = () => {
                     setAppView('setup');
                 }
             } else {
-                console.error('Failed to fetch projects:', projectsResult.reason);
+                const error = projectsResult.reason;
+                console.error('Failed to fetch projects:', error);
+                console.error('Error details:', {
+                    message: error?.message,
+                    name: error?.name,
+                    stack: error?.stack?.substring(0, 500)
+                });
+                
+                // Check if it's a timeout or network error
+                const isTimeout = error?.message?.includes('timeout') || error?.message?.includes('504');
+                const isNetworkError = error?.message?.includes('Failed to fetch') || error?.message?.includes('NetworkError');
+                
+                if (isTimeout || isNetworkError) {
+                    // Show error to user instead of silently showing setup screen
+                    alert(`Unable to connect to server. The backend may be experiencing issues.\n\nError: ${error?.message || 'Connection timeout'}\n\nPlease try again in a moment.`);
+                }
+                
                 setProjects([]);
                 setAppView('setup');
             }
