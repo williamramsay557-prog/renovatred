@@ -23,8 +23,11 @@ function getSupabaseClient() {
             throw new Error('Supabase credentials not configured. Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
         }
         console.log('=== Lazy initializing Supabase client ===');
+        console.log('Supabase URL:', supabaseUrl ? `${supabaseUrl.substring(0, 30)}...` : 'MISSING');
+        console.log('Service Key present:', !!supabaseServiceKey);
+        
         try {
-            // Configure Supabase client for serverless
+            // Configure Supabase client for serverless with connection pooling
             supabaseServer = createClient(supabaseUrl, supabaseServiceKey, {
                 auth: {
                     autoRefreshToken: false,
@@ -32,12 +35,26 @@ function getSupabaseClient() {
                 },
                 db: {
                     schema: 'public'
+                },
+                global: {
+                    // Add fetch timeout for serverless
+                    fetch: (url, options = {}) => {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+                        
+                        return fetch(url, {
+                            ...options,
+                            signal: controller.signal
+                        }).finally(() => clearTimeout(timeoutId));
+                    }
                 }
             });
             console.log('=== Supabase client initialized successfully ===');
         } catch (error) {
             console.error('=== ERROR initializing Supabase client ===');
-            console.error(error);
+            console.error('Error type:', error?.constructor?.name);
+            console.error('Error message:', error?.message);
+            console.error('Error stack:', error?.stack?.substring(0, 500));
             throw error;
         }
     }
@@ -356,6 +373,49 @@ app.get('/api/test', (req, res) => {
     });
 });
 
+// Direct Supabase connection test - no auth, minimal query
+app.get('/api/test-supabase', async (req, res) => {
+    console.log('=== /api/test-supabase endpoint called ===');
+    const startTime = Date.now();
+    
+    try {
+        console.log('Getting Supabase client...');
+        const client = getSupabaseClient();
+        console.log('Supabase client obtained, executing query...');
+        
+        const queryStart = Date.now();
+        const { data, error } = await client
+            .from('projects')
+            .select('id')
+            .limit(1);
+        
+        const queryTime = Date.now() - queryStart;
+        const totalTime = Date.now() - startTime;
+        
+        console.log(`Query completed in ${queryTime}ms, total time: ${totalTime}ms`);
+        
+        res.status(200).json({ 
+            success: true,
+            queryTime: `${queryTime}ms`,
+            totalTime: `${totalTime}ms`,
+            data: data?.length || 0,
+            error: error ? {
+                message: error.message,
+                code: error.code,
+                details: error.details
+            } : null
+        });
+    } catch (err) {
+        const totalTime = Date.now() - startTime;
+        console.error(`Supabase test failed after ${totalTime}ms:`, err);
+        res.status(500).json({ 
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+            totalTime: `${totalTime}ms`
+        });
+    }
+});
+
 // Simple Express test - no auth, no Supabase, just to verify Express works
 app.get('/api/test-express', (req, res) => {
     console.log('=== /api/test-express endpoint called ===');
@@ -377,20 +437,7 @@ app.get('/api/test-express', (req, res) => {
  * GET /api/projects
  * Fetch all projects for the authenticated user
  */
-app.get('/api/projects', async (req, res, next) => {
-    // Temporarily bypass auth to test if that's the issue
-    console.log('=== GET /api/projects - BYPASSING AUTH FOR TESTING ===');
-    console.log('Auth header:', req.headers.authorization ? 'PRESENT' : 'MISSING');
-    
-    // Mock user for testing
-    req.user = {
-        id: 'test-user-id',
-        email: 'test@example.com',
-        token: 'test-token'
-    };
-    
-    next();
-}, async (req, res) => {
+app.get('/api/projects', verifyAuth, async (req, res) => {
     const startTime = Date.now();
     // Log immediately to verify function is called
     console.log('=== GET /api/projects START ===');
