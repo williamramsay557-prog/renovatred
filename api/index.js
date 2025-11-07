@@ -73,32 +73,41 @@ export default async function(req, res) {
     console.log('Original req.path:', req.path);
     console.log('x-vercel-function-path header:', req.headers['x-vercel-function-path']);
     
-    // Vercel rewrites /api/* to /api, stripping the path
-    // We need to reconstruct the original path from req.url or headers
+    // Vercel rewrites /api/* to /api, but the original path is in the request
+    // We need to get the original path from the request URL or headers
+    // The original request URL should be in req.url or we can reconstruct it
+    
+    // Get the original path - Vercel should preserve it in req.url
+    // If not, try to get it from headers or reconstruct
     let expressPath = req.url;
     
-    // If req.url is just '/' or doesn't start with /api, reconstruct it
-    if (!expressPath || expressPath === '/' || !expressPath.startsWith('/api')) {
-        // Check if we can get the path from the original URL
-        // Vercel might preserve it in req.url, or we need to reconstruct
-        const vercelPath = req.headers['x-vercel-function-path'];
-        if (vercelPath && vercelPath !== 'api') {
-            // x-vercel-function-path might be just 'api' or the full path
-            expressPath = vercelPath.startsWith('/') ? vercelPath : `/${vercelPath}`;
-            if (!expressPath.startsWith('/api')) {
-                expressPath = `/api${expressPath}`;
-            }
+    // Check if we have the full path already
+    if (expressPath && expressPath.startsWith('/api')) {
+        // We have the full path, use it
+        console.log('Using req.url as Express path:', expressPath);
+    } else {
+        // Need to reconstruct - Vercel rewrote /api/test-express to /api
+        // The original path might be in the query string or headers
+        // Try to get from x-vercel-function-path or reconstruct from referer
+        const originalUrl = req.headers['x-vercel-original-url'] || 
+                           req.headers['referer'] || 
+                           req.url;
+        
+        // Extract path from URL if it's a full URL
+        if (originalUrl && originalUrl.includes('/api/')) {
+            const urlObj = new URL(originalUrl, 'https://example.com');
+            expressPath = urlObj.pathname;
+            console.log('Reconstructed path from URL:', expressPath);
+        } else if (req.url && req.url !== '/') {
+            // Use req.url and ensure it has /api prefix
+            expressPath = req.url.startsWith('/api') ? req.url : `/api${req.url}`;
+            console.log('Using req.url with /api prefix:', expressPath);
         } else {
-            // Try to extract from referer or reconstruct from URL
-            // If req.url has the full path, use it
-            if (req.url && req.url !== '/') {
-                expressPath = req.url.startsWith('/api') ? req.url : `/api${req.url}`;
-            } else {
-                // Last resort: check if there's a way to get the original path
-                // For now, we'll need to handle this case-by-case
-                console.warn('Could not determine path, using req.url as-is');
-                expressPath = req.url || '/';
-            }
+            // Last resort: use the path from the original request
+            // This should be in the query or we need to parse it differently
+            console.warn('Could not determine path from req.url:', req.url);
+            console.warn('Headers:', Object.keys(req.headers));
+            expressPath = req.url || '/api';
         }
     }
     
