@@ -22,18 +22,33 @@ async function getHandler() {
         
         try {
             // Dynamically import to avoid blocking
+            console.log('Step 1: Starting dynamic import of server.js...');
             const serverModule = await import('../server.js');
+            console.log('Step 2: server.js module imported successfully');
+            
+            console.log('Step 3: Extracting app from module...');
             app = serverModule.default;
+            console.log('Step 4: App extracted, type:', typeof app);
+            console.log('Step 5: App has get method:', typeof app?.get === 'function');
+            
+            if (!app) {
+                throw new Error('server.js did not export an app. Check export default app;');
+            }
+            
             console.log(`=== server.js imported in ${Date.now() - startTime}ms ===`);
             
             // Create handler
+            console.log('Step 6: Creating serverless handler...');
             handler = serverless(app, {
                 binary: ['image/*', 'application/pdf'],
             });
             console.log('=== Serverless handler created ===');
         } catch (error) {
             console.error('=== ERROR loading server.js ===');
-            console.error(error);
+            console.error('Error type:', error?.constructor?.name);
+            console.error('Error message:', error?.message);
+            console.error('Error stack:', error?.stack);
+            console.error('Full error object:', error);
             throw error;
         }
     }
@@ -42,8 +57,29 @@ async function getHandler() {
 
 // Export handler that lazy loads on first request
 export default async function(req, res) {
-    console.log('=== Request received, getting handler ===');
-    const handlerInstance = await getHandler();
-    console.log('=== Handler obtained, calling it ===');
-    return handlerInstance(req, res);
+    console.log('=== Request received ===');
+    console.log('Request method:', req.method);
+    console.log('Request URL:', req.url);
+    console.log('Request path:', req.path);
+    
+    try {
+        console.log('Step 1: Getting handler...');
+        const handlerInstance = await getHandler();
+        console.log('Step 2: Handler obtained, calling it...');
+        return handlerInstance(req, res);
+    } catch (error) {
+        console.error('=== FATAL ERROR in request handler ===');
+        console.error('Error type:', error?.constructor?.name);
+        console.error('Error message:', error?.message);
+        console.error('Error stack:', error?.stack);
+        
+        // Return error response
+        if (!res.headersSent) {
+            res.status(500).json({
+                error: 'Server initialization failed',
+                message: error?.message || 'Unknown error',
+                details: process.env.NODE_ENV === 'development' ? error?.stack : undefined
+            });
+        }
+    }
 };

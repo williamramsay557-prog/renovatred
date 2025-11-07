@@ -67,15 +67,23 @@ function getSupabaseClient() {
 }
 
 // Don't initialize at module load - wait for first use
+// In serverless, don't exit - let it fail gracefully on first request
 if (!isServerless && (!supabaseUrl || !supabaseServiceKey)) {
     console.error('ERROR: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set');
-    process.exit(1);
+    // Only exit in non-serverless environments (local dev)
+    if (process.env.VERCEL !== '1') {
+        process.exit(1);
+    }
 }
 
 // Validate required environment variables
+// In serverless, don't exit - let it fail gracefully on first use
 if (!process.env.GEMINI_API_KEY && !isServerless) {
     console.error('ERROR: GEMINI_API_KEY is not set. Please add it to your environment variables.');
-    process.exit(1);
+    // Only exit in non-serverless environments (local dev)
+    if (process.env.VERCEL !== '1') {
+        process.exit(1);
+    }
 }
 
 // ============================================================================
